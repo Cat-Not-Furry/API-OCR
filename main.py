@@ -1,64 +1,133 @@
+import os
+import sys
+import logging
+from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-import pytesseract
 from PIL import Image
 import io
-import os
-from pathlib import Path  # <-- ¡CORREGIDO! (antes era: from pathlib Path)
-import logging
-import cv2
-import numpy as np
-import re
+import subprocess
+import tempfile
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configurar rutas de Tesseract - VERSIÓN ROBUSTA
+# Obtener rutas absolutas
 BASE_DIR = Path(__file__).parent.absolute()
+TESSERACT_BIN = os.path.join(BASE_DIR, "bin", "tesseract")
+TESSDATA_DIR = os.path.join(BASE_DIR, "tessdata")
+
 logger.info(f"🔍 Directorio base: {BASE_DIR}")
+logger.info(f"🔍 Tesseract bin: {TESSERACT_BIN}")
+logger.info(f"🔍 Tessdata dir: {TESSDATA_DIR}")
 
-# Posibles rutas para el binario de Tesseract
-posibles_rutas = [
-    os.path.join(BASE_DIR, "bin", "tesseract"),  # /opt/render/project/src/bin/tesseract
-    os.path.join(os.getcwd(), "bin", "tesseract"),  # ./bin/tesseract
-    "/opt/render/project/src/bin/tesseract",  # Ruta absoluta Render
-    "./bin/tesseract",  # Ruta relativa
-]
-
-TESSERACT_PATH = None
-for ruta in posibles_rutas:
-    if os.path.exists(ruta):
-        TESSERACT_PATH = ruta
-        logger.info(f"✅ Tesseract encontrado en: {ruta}")
-        # Verificar permisos
-        if os.access(ruta, os.X_OK):
-            logger.info(f"✅ Tiene permisos de ejecución")
-        else:
-            logger.warning(f"⚠️ No tiene permisos de ejecución")
-        break
-
-if not TESSERACT_PATH:
-    logger.error(f"❌ Tesseract NO encontrado en ninguna ruta")
-    # Listar contenido para debug
-    logger.info(f"Contenido de {BASE_DIR}: {os.listdir(BASE_DIR)}")
+# Verificar que el binario existe y es ejecutable
+if not os.path.exists(TESSERACT_BIN):
+    logger.error(f"❌ No existe el binario en: {TESSERACT_BIN}")
+    # Listar contenido de bin/
     if os.path.exists(os.path.join(BASE_DIR, "bin")):
         logger.info(f"Contenido de bin/: {os.listdir(os.path.join(BASE_DIR, 'bin'))}")
 else:
-    # Configurar pytesseract
-    pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
-    os.environ["TESSDATA_PREFIX"] = os.path.join(BASE_DIR, "tessdata")
-    logger.info(f"✅ TESSDATA_PREFIX: {os.environ['TESSDATA_PREFIX']}")
+    logger.info(f"✅ Binario encontrado")
+    if os.access(TESSERACT_BIN, os.X_OK):
+        logger.info(f"✅ Permisos de ejecución OK")
+    else:
+        logger.warning(f"⚠️ Sin permisos de ejecución, intentando arreglar...")
+        try:
+            os.chmod(TESSERACT_BIN, 0o755)
+            logger.info(f"✅ Permisos corregidos")
+        except Exception as e:
+            logger.error(f"❌ No se pudo cambiar permisos: {e}")
 
-    # Verificar idiomas disponibles
+# Verificar tessdata
+if os.path.exists(TESSDATA_DIR):
+    logger.info(f"✅ Tessdata encontrado")
+    traineddata_files = [
+        f for f in os.listdir(TESSDATA_DIR) if f.endswith(".traineddata")
+    ]
+    logger.info(f"Archivos traineddata: {traineddata_files}")
+else:
+    logger.error(f"❌ No existe tessdata en: {TESSDATA_DIR}")
+
+
+# --- SOLUCIÓN: Función wrapper que usa subprocess directamente ---
+def tesseract_ocr(image_path, lang="spa", psm=6):
+    """
+    Ejecuta Tesseract directamente usando subprocess
+    Esto evita cualquier problema con pytesseract
+    """
     try:
-        languages = pytesseract.get_languages()
-        logger.info(f"✅ Idiomas disponibles: {languages}")
-    except Exception as e:
-        logger.error(f"❌ Error cargando idiomas: {e}")
+        # Construir comando
+        cmd = [
+            TESSERACT_BIN,
+            image_path,
+            "stdout",  # Salida a stdout
+            "-l",
+            lang,
+            "--psm",
+            str(psm),
+            "--oem",
+            "3",
+        ]
 
-# Crear app FastAPI
+        # Configurar entorno
+        env = os.environ.copy()
+        env["TESSDATA_PREFIX"] = TESSDATA_DIR
+
+        logger.info(f"Ejecutando: {' '.join(cmd)}")
+
+        # Ejecutar Tesseract
+        result = subprocess.run(
+            cmd, env=env, capture_output=True, text=True, timeout=30
+        )
+
+        if result.returncode != 0:
+            logger.error(f"Error de Tesseract: {result.stderr}")
+            return None, result.stderr
+
+        return result.stdout.strip(), None
+
+    except subprocess.TimeoutExpired:
+        return None, "Timeout en Tesseract"
+    except Exception as e:
+        return None, str(e)
+
+
+def tesseract_version():
+    """Obtiene la versión de Tesseract"""
+    try:
+        result = subprocess.run(
+            [TESSERACT_BIN, "--version"], env=os.environ, capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            return result.stdout.split("\n")[0]
+    except:
+        pass
+    return "Desconocido"
+
+
+def tesseract_languages():
+    """Obtiene los idiomas disponibles"""
+    try:
+        result = subprocess.run(
+            [TESSERACT_BIN, "--list-langs"],
+            env={"TESSDATA_PREFIX": TESSDATA_DIR},
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            # La primera línea es "List of available languages"
+            lines = result.stdout.strip().split("\n")
+            if len(lines) > 1:
+                return lines[1:]  # Saltar la primera línea
+    except:
+        pass
+    return []
+
+
+# --- FastAPI App ---
 app = FastAPI(
     title="API OCR AIDA",
     description="API para extraer texto de formularios educativos",
@@ -78,22 +147,29 @@ app.add_middleware(
 @app.get("/")
 async def root():
     """Información del servicio"""
-    info = {
+    version = tesseract_version()
+    languages = tesseract_languages()
+
+    return {
         "message": "API OCR AIDA funcionando",
         "status": "ok",
-        "tesseract_path": TESSERACT_PATH,
-        "tesseract_exists": TESSERACT_PATH is not None,
-        "tessdata_prefix": os.environ.get("TESSDATA_PREFIX", "No configurado"),
+        "tesseract": {
+            "path": TESSERACT_BIN,
+            "exists": os.path.exists(TESSERACT_BIN),
+            "executable": os.access(TESSERACT_BIN, os.X_OK)
+            if os.path.exists(TESSERACT_BIN)
+            else False,
+            "version": version,
+        },
+        "tessdata": {
+            "path": TESSDATA_DIR,
+            "exists": os.path.exists(TESSDATA_DIR),
+            "languages": languages,
+            "files": [f for f in os.listdir(TESSDATA_DIR) if f.endswith(".traineddata")]
+            if os.path.exists(TESSDATA_DIR)
+            else [],
+        },
     }
-
-    if TESSERACT_PATH:
-        try:
-            info["tesseract_version"] = str(pytesseract.get_tesseract_version())
-            info["languages"] = pytesseract.get_languages()
-        except Exception as e:
-            info["tesseract_error"] = str(e)
-
-    return info
 
 
 @app.get("/health")
@@ -105,39 +181,42 @@ async def health_check():
 @app.post("/ocr")
 async def ocr_image(file: UploadFile = File(...), lang: str = "spa", psm: int = 6):
     """
-    Endpoint básico para extraer texto de una imagen
+    Endpoint para extraer texto de una imagen usando Tesseract directamente
     """
+    temp_path = None
     try:
         # Validar archivo
         if not file.content_type.startswith("image/"):
             raise HTTPException(400, "El archivo debe ser una imagen")
 
-        # Leer imagen
+        # Guardar imagen temporalmente
         contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
 
-        logger.info(f"Procesando imagen: {file.filename}, tamaño: {image.size}")
+        # Crear archivo temporal
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+            tmp.write(contents)
+            temp_path = tmp.name
 
-        # Verificar que Tesseract está configurado
-        if not TESSERACT_PATH:
-            raise HTTPException(500, "Tesseract no está configurado correctamente")
+        logger.info(
+            f"Procesando imagen: {file.filename}, tamaño: {len(contents)} bytes"
+        )
 
-        # Configurar Tesseract
-        custom_config = f"--psm {psm} -l {lang} --oem 3"
+        # Ejecutar Tesseract
+        text, error = tesseract_ocr(temp_path, lang=lang, psm=psm)
 
-        # Realizar OCR
-        text = pytesseract.image_to_string(image, config=custom_config)
+        if error:
+            raise HTTPException(500, f"Error en OCR: {error}")
 
         return JSONResponse(
             {
                 "success": True,
                 "filename": file.filename,
-                "text": text,
+                "text": text or "",
                 "metadata": {
                     "language": lang,
                     "psm": psm,
-                    "image_size": image.size,
-                    "tesseract_path": TESSERACT_PATH,
+                    "tesseract_path": TESSERACT_BIN,
+                    "tessdata_path": TESSDATA_DIR,
                 },
             }
         )
@@ -146,65 +225,55 @@ async def ocr_image(file: UploadFile = File(...), lang: str = "spa", psm: int = 
         logger.error(f"Error procesando imagen: {str(e)}")
         raise HTTPException(500, f"Error en OCR: {str(e)}")
 
-
-# Clase para OCR perfeccionado (versión simplificada)
-class OCRProcesador:
-    def __init__(self):
-        self.tesseract_path = TESSERACT_PATH
-        self.tessdata_path = os.environ.get("TESSDATA_PREFIX")
-
-    def preprocesar_imagen(self, image_bytes):
-        """Preprocesamiento básico de imagen"""
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-        # Convertir a grises
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        # Mejorar contraste
-        gray = cv2.equalizeHist(gray)
-
-        # Reducir ruido
-        gray = cv2.medianBlur(gray, 3)
-
-        return gray
+    finally:
+        # Limpiar archivo temporal
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
-ocr_procesador = OCRProcesador()
-
-
-@app.post("/ocr/mejorado")
-async def ocr_mejorado(file: UploadFile = File(...)):
+@app.post("/ocr/debug")
+async def ocr_debug(file: UploadFile = File(...)):
     """
-    Endpoint con preprocesamiento mejorado para formularios
+    Endpoint de debug que muestra información detallada
     """
+    result = {
+        "filename": file.filename,
+        "content_type": file.content_type,
+        "tesseract": {
+            "path": TESSERACT_BIN,
+            "exists": os.path.exists(TESSERACT_BIN),
+            "executable": os.access(TESSERACT_BIN, os.X_OK)
+            if os.path.exists(TESSERACT_BIN)
+            else False,
+            "version": tesseract_version(),
+        },
+        "tessdata": {
+            "path": TESSDATA_DIR,
+            "exists": os.path.exists(TESSDATA_DIR),
+            "files": [],
+        },
+    }
+
+    if os.path.exists(TESSDATA_DIR):
+        result["tessdata"]["files"] = os.listdir(TESSDATA_DIR)
+
+    # Probar ejecución básica
     try:
-        contents = await file.read()
-
-        # Preprocesar
-        img_procesada = ocr_procesador.preprocesar_imagen(contents)
-
-        # Convertir numpy array a PIL Image para pytesseract
-        img_pil = Image.fromarray(img_procesada)
-
-        # Configuración optimizada
-        config = r"--oem 3 --psm 6 -l spa"
-
-        # OCR
-        text = pytesseract.image_to_string(img_pil, config=config)
-
-        return JSONResponse(
-            {
-                "success": True,
-                "filename": file.filename,
-                "text": text,
-                "preprocesado": True,
-            }
+        version_output = subprocess.run(
+            [TESSERACT_BIN, "--version"],
+            env={"TESSDATA_PREFIX": TESSDATA_DIR},
+            capture_output=True,
+            text=True,
         )
-
+        result["test_version"] = {
+            "stdout": version_output.stdout,
+            "stderr": version_output.stderr,
+            "returncode": version_output.returncode,
+        }
     except Exception as e:
-        logger.error(f"Error: {str(e)}")
-        raise HTTPException(500, f"Error: {str(e)}")
+        result["test_version_error"] = str(e)
+
+    return result
 
 
 if __name__ == "__main__":
