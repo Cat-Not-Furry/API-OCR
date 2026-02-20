@@ -1,4 +1,4 @@
-# app/main.py
+# main.py
 import os
 import cv2
 import numpy as np
@@ -6,7 +6,14 @@ import pytesseract
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+import subprocess
 
+# Usar el binario incluido
+TESSERACT_PATH = os.path.join(os.path.dirname(__file__), "bin", "tesseract")
+os.environ["TESSDATA_PREFIX"] = os.path.join(os.path.dirname(__file__), "tessdata")
+
+# Configurar pytesseract
+pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
