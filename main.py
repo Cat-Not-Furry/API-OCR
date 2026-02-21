@@ -584,7 +584,7 @@ async def ocr_documento_completo(
     Endpoint inteligente que elige la mejor estrategia según el tipo de documento.
     """
     await validate_file(file)
-    img = await read_image(file)
+    img = await read_image(file)  # Leemos una sola vez
 
     # Análisis rápido: ¿hay muchas líneas horizontales? (posibles tablas)
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
@@ -601,16 +601,152 @@ async def ocr_documento_completo(
 
     # Decidir estrategia
     if num_horizontal > 10 or optimizar_para == "tablas":
-        # Usar endpoint de tablas
-        return await ocr_tabla(file, lang, "json")
+        # Usar lógica de tablas, pero sin volver a leer el archivo
+        # Adaptamos la función de tabla para recibir imagen directamente
+        return await procesar_como_tabla(img, lang)
     elif optimizar_para == "mixto":
-        # Usar segmentación
-        return await ocr_con_segmentacion(file, lang, detectar_tablas=True)
+        return await procesar_con_segmentacion(img, lang, detectar_tablas=True)
     else:
-        # Usar preprocesado estándar
-        return await ocr_con_preprocesamiento(
-            file, lang, correccion_skew=True, metodo_binarizacion="sauvola"
+        return await procesar_con_preprocesamiento(
+            img, lang, correccion_skew=True, metodo_binarizacion="sauvola"
         )
+
+
+# Funciones auxiliares que reciben numpy array en lugar de UploadFile
+async def procesar_con_preprocesamiento(
+    img: np.ndarray, lang: str, correccion_skew: bool, metodo_binarizacion: str
+):
+    # Aplicar preprocesamiento
+    if correccion_skew:
+        img = correct_skew(img)
+    img = remove_shadows(img)
+    img = remove_noise(img, method="nlmeans")
+    img = binarize(img, method=metodo_binarizacion)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+        cv2.imwrite(tmp.name, img)
+        tmp_path = tmp.name
+    try:
+        text = run_tesseract(tmp_path, lang, psm=6)
+    finally:
+        os.unlink(tmp_path)
+    return {
+        "success": True,
+        "filename": "procesado",  # Podrías pasar el nombre original si lo guardas
+        "text": text,
+        "metadata": {
+            "language": lang,
+            "skew_correction": correccion_skew,
+            "binarization": metodo_binarizacion,
+        },
+    }
+
+
+async def procesar_con_segmentacion(img: np.ndarray, lang: str, detectar_tablas: bool):
+    # Similar a ocr_con_segmentacion pero recibiendo img directamente
+    processed = deskew_and_clean(img.copy())
+    regions = segment_regions(processed)
+    if detectar_tablas:
+        tables = detect_tables(processed)
+        for table in tables:
+            contained = False
+            for reg in regions:
+                rx, ry, rw, rh = reg["bbox"]
+                tx, ty, tw, th = table["bbox"]
+                if rx <= tx and ry <= ty and rx + rw >= tx + tw and ry + rh >= ty + th:
+                    contained = True
+                    break
+            if not contained:
+                regions.append(table)
+    regions.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
+    resultados = []
+    for i, reg in enumerate(regions):
+        try:
+            texto = ocr_region(img, reg, lang)
+            resultados.append(
+                {"region": i, "tipo": reg["type"], "bbox": reg["bbox"], "texto": texto}
+            )
+        except Exception as e:
+            resultados.append(
+                {"region": i, "tipo": reg["type"], "bbox": reg["bbox"], "error": str(e)}
+            )
+    texto_completo = "\n".join([r["texto"] for r in resultados if "texto" in r])
+    return {
+        "success": True,
+        "filename": "procesado",
+        "num_regiones": len(resultados),
+        "texto_completo": texto_completo,
+        "regiones": resultados,
+        "metadata": {"language": lang, "detectar_tablas": detectar_tablas},
+    }
+
+
+async def procesar_como_tabla(img: np.ndarray, lang: str):
+    # Versión simplificada de ocr_tabla que recibe imagen
+    processed = deskew_and_clean(img)
+    tables = detect_tables(processed)
+    if not tables:
+        return {"success": False, "error": "No se detectaron tablas"}
+    main_table = max(tables, key=lambda t: t["bbox"][2] * t["bbox"][3])
+    bbox = main_table["bbox"]
+    roi = img[bbox[1] : bbox[1] + bbox[3], bbox[0] : bbox[0] + bbox[2]]
+    gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
+    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    horizontal_kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT, (roi.shape[1] // 10, 1)
+    )
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, roi.shape[0] // 10))
+    horizontal_lines = cv2.morphologyEx(
+        thresh, cv2.MORPH_OPEN, horizontal_kernel, iterations=2
+    )
+    vertical_lines = cv2.morphologyEx(
+        thresh, cv2.MORPH_OPEN, vertical_kernel, iterations=2
+    )
+    h_proj = np.sum(horizontal_lines, axis=1) // 255
+    v_proj = np.sum(vertical_lines, axis=0) // 255
+    h_thresh = np.max(h_proj) * 0.2
+    v_thresh = np.max(v_proj) * 0.2
+    h_lines = np.where(h_proj > h_thresh)[0]
+    v_lines = np.where(v_proj > v_thresh)[0]
+
+    def group_lines(lines, threshold=10):
+        if len(lines) == 0:
+            return []
+        grouped = [lines[0]]
+        for i in range(1, len(lines)):
+            if lines[i] - grouped[-1] <= threshold:
+                grouped[-1] = (grouped[-1] + lines[i]) // 2  # promedio simple
+            else:
+                grouped.append(lines[i])
+        return grouped
+
+    h_pos = group_lines(h_lines)
+    v_pos = group_lines(v_lines)
+    data = []
+    for i in range(len(h_pos) - 1):
+        row = []
+        for j in range(len(v_pos) - 1):
+            x1, x2 = v_pos[j], v_pos[j + 1]
+            y1, y2 = h_pos[i], h_pos[i + 1]
+            cell_roi = roi[y1:y2, x1:x2]
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                cv2.imwrite(tmp.name, cv2.cvtColor(cell_roi, cv2.COLOR_RGB2BGR))
+                tmp_path = tmp.name
+            try:
+                cell_text = run_tesseract(tmp_path, lang, psm=7)
+            except:
+                cell_text = ""
+            finally:
+                os.unlink(tmp_path)
+            row.append(cell_text.strip())
+        data.append(row)
+    return {
+        "success": True,
+        "filename": "procesado",
+        "tabla": data,
+        "num_filas": len(data),
+        "num_columnas": len(data[0]) if data else 0,
+    }
 
 
 if __name__ == "__main__":
