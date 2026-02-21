@@ -722,38 +722,36 @@ async def procesar_como_tabla(img: np.ndarray, lang: str):
 async def ocr_documento_completo(
     file: UploadFile = File(...),
     lang: str = Form("spa"),
-    optimizar_para: str = Form("texto"),  # texto, tablas, mixto
+    optimizar_para: str = Form("texto"),
 ):
-    """
-    Endpoint inteligente que elige la mejor estrategia según el tipo de documento.
-    """
-    await validate_file(file)
-    img = await read_image(file)  # Leemos una sola vez
+    try:
+        await validate_file(file)
+        img = await read_image(file)
 
-    # Análisis rápido: ¿hay muchas líneas horizontales? (posibles tablas)
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    edges = cv2.Canny(gray, 50, 150)
-    lines = cv2.HoughLinesP(
-        edges, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=10
-    )
-    num_horizontal = 0
-    if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            if abs(y2 - y1) < 10:  # línea casi horizontal
-                num_horizontal += 1
-
-    # Decidir estrategia
-    if num_horizontal > 10 or optimizar_para == "tablas":
-        # Usar lógica de tablas, pero sin volver a leer el archivo
-        # Adaptamos la función de tabla para recibir imagen directamente
-        return await procesar_como_tabla(img, lang)
-    elif optimizar_para == "mixto":
-        return await procesar_con_segmentacion(img, lang, detectar_tablas=True)
-    else:
-        return await procesar_con_preprocesamiento(
-            img, lang, correccion_skew=True, metodo_binarizacion="sauvola"
+        # Análisis rápido
+        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        edges = cv2.Canny(gray, 50, 150)
+        lines = cv2.HoughLinesP(
+            edges, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=10
         )
+        num_horizontal = 0
+        if lines is not None:
+            for line in lines:
+                x1, y1, x2, y2 = line[0]
+                if abs(y2 - y1) < 10:
+                    num_horizontal += 1
+
+        if num_horizontal > 10 or optimizar_para == "tablas":
+            return await procesar_como_tabla(img, lang)
+        elif optimizar_para == "mixto":
+            return await procesar_con_segmentacion(img, lang, detectar_tablas=True)
+        else:
+            return await procesar_con_preprocesamiento(
+                img, lang, correccion_skew=True, metodo_binarizacion="sauvola"
+            )
+    except Exception as e:
+        logger.error("Error en /ocr/documento_completo", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
 if __name__ == "__main__":
