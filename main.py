@@ -574,44 +574,6 @@ async def ocr_tabla(
         }
 
 
-@app.post("/ocr/documento_completo")
-async def ocr_documento_completo(
-    file: UploadFile = File(...),
-    lang: str = Form("spa"),
-    optimizar_para: str = Form("texto"),  # texto, tablas, mixto
-):
-    """
-    Endpoint inteligente que elige la mejor estrategia según el tipo de documento.
-    """
-    await validate_file(file)
-    img = await read_image(file)  # Leemos una sola vez
-
-    # Análisis rápido: ¿hay muchas líneas horizontales? (posibles tablas)
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    edges = cv2.Canny(gray, 50, 150)
-    lines = cv2.HoughLinesP(
-        edges, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=10
-    )
-    num_horizontal = 0
-    if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            if abs(y2 - y1) < 10:  # línea casi horizontal
-                num_horizontal += 1
-
-    # Decidir estrategia
-    if num_horizontal > 10 or optimizar_para == "tablas":
-        # Usar lógica de tablas, pero sin volver a leer el archivo
-        # Adaptamos la función de tabla para recibir imagen directamente
-        return await procesar_como_tabla(img, lang)
-    elif optimizar_para == "mixto":
-        return await procesar_con_segmentacion(img, lang, detectar_tablas=True)
-    else:
-        return await procesar_con_preprocesamiento(
-            img, lang, correccion_skew=True, metodo_binarizacion="sauvola"
-        )
-
-
 # Funciones auxiliares que reciben numpy array en lugar de UploadFile
 async def procesar_con_preprocesamiento(
     img: np.ndarray, lang: str, correccion_skew: bool, metodo_binarizacion: str
@@ -747,6 +709,44 @@ async def procesar_como_tabla(img: np.ndarray, lang: str):
         "num_filas": len(data),
         "num_columnas": len(data[0]) if data else 0,
     }
+
+
+@app.post("/ocr/documento_completo")
+async def ocr_documento_completo(
+    file: UploadFile = File(...),
+    lang: str = Form("spa"),
+    optimizar_para: str = Form("texto"),  # texto, tablas, mixto
+):
+    """
+    Endpoint inteligente que elige la mejor estrategia según el tipo de documento.
+    """
+    await validate_file(file)
+    img = await read_image(file)  # Leemos una sola vez
+
+    # Análisis rápido: ¿hay muchas líneas horizontales? (posibles tablas)
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    edges = cv2.Canny(gray, 50, 150)
+    lines = cv2.HoughLinesP(
+        edges, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=10
+    )
+    num_horizontal = 0
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            if abs(y2 - y1) < 10:  # línea casi horizontal
+                num_horizontal += 1
+
+    # Decidir estrategia
+    if num_horizontal > 10 or optimizar_para == "tablas":
+        # Usar lógica de tablas, pero sin volver a leer el archivo
+        # Adaptamos la función de tabla para recibir imagen directamente
+        return await procesar_como_tabla(img, lang)
+    elif optimizar_para == "mixto":
+        return await procesar_con_segmentacion(img, lang, detectar_tablas=True)
+    else:
+        return await procesar_con_preprocesamiento(
+            img, lang, correccion_skew=True, metodo_binarizacion="sauvola"
+        )
 
 
 if __name__ == "__main__":
