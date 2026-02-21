@@ -7,5 +7,9 @@ Pillow==10.4.0
 python-multipart==0.0.9
 requests==2.32.3
 python-dotenv==1.0.1
-gunicorn==21.2.0  # Para producción
-psycopg2-binary==2.9.9  # Si usas PostgreSQL
+gunicorn==21.2.0
+psycopg2-binary==2.9.9
+scikit-image==0.24.0  # para filtros avanzados y morfología
+scipy==1.14.1         # para interpolación y ajustes
+pandas==2.2.3         # para estructurar tablas extraídas
+pdf2image==1.17.0     # opcional: si quieres soporte PDF
