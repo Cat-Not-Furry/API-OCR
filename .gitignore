@@ -6,3 +6,5 @@ venv/
 uploads/
 test/
 .DS_Store
+*.html
+*.php
