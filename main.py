@@ -346,7 +346,7 @@ async def root():
 @app.post("/ocr/basico")
 async def ocr_basico(file: UploadFile = File(...), lang: str = Form("spa")):
     """Endpoint simple sin preprocesamiento (compatibilidad)."""
-    await validate_file(file)
+    validate_file(file)
     img = await read_image(file)
 
     # Guardar temporal
@@ -375,7 +375,7 @@ async def ocr_con_preprocesamiento(
     metodo_binarizacion: str = Form("sauvola"),  # otsu, adaptive, sauvola
 ):
     """OCR con pipeline de limpieza optimizado para documentos académicos."""
-    await validate_file(file)
+    validate_file(file)
     img = await read_image(file)
 
     # Aplicar preprocesamiento
@@ -417,7 +417,7 @@ async def ocr_con_segmentacion(
     Segmenta la imagen en regiones (texto, tablas, imágenes) y aplica OCR específico.
     Ideal para documentos complejos con múltiples elementos.
     """
-    await validate_file(file)
+    validate_file(file)
     img = await read_image(file)
 
     # Preprocesamiento ligero para mejorar segmentación
@@ -481,7 +481,7 @@ async def ocr_tabla(
     """
     Especializado en extraer tablas: detecta la tabla, segmenta celdas y devuelve estructura.
     """
-    await validate_file(file)
+    validate_file(file)
     img = await read_image(file)
 
     # Preprocesar
@@ -725,7 +725,7 @@ async def ocr_documento_completo(
     optimizar_para: str = Form("texto"),
 ):
     try:
-        await validate_file(file)
+        validate_file(file)
         img = await read_image(file)
 
         # Análisis rápido
