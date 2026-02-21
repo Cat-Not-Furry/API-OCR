@@ -117,8 +117,15 @@ def correct_skew(image: np.ndarray) -> np.ndarray:
 
 
 def remove_noise(image: np.ndarray, method="nlmeans") -> np.ndarray:
-    """Elimina ruido usando diferentes métodos."""
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    """Elimina ruido usando diferentes métodos. Acepta RGB o gris."""
+    # Si es RGB, convertir a gris; si ya es gris, usarla directamente
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = image
+
+    logger.info(f"remove_noise - shape: {image.shape}, canales: {len(image.shape)}")
+
     if method == "nlmeans":
         return cv2.fastNlMeansDenoising(
             gray, h=30, templateWindowSize=7, searchWindowSize=21
