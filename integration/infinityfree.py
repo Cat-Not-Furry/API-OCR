@@ -1,10 +1,7 @@
 # main.py (dentro de algún endpoint, por ejemplo /ocr/checkboxes)
-from integration.infinityfree import InfinityFreeClient
 
 # Configurar cliente (puedes poner la URL en config.py)
-INFINITY_URL = os.getenv(
-    "INFINITY_URL", "https://keydash-user-admin.wuaze.com/other_test.html"
-)
+INFINITY_URL = os.getenv("INFINITY_URL", "https://keydash-user-admin.wuaze.com")
 INFINITY_API_KEY = os.getenv("INFINITY_API_KEY", "")
 infinity_client = InfinityFreeClient(INFINITY_URL, INFINITY_API_KEY)
 
