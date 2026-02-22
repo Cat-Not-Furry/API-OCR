@@ -3,48 +3,107 @@
 <head>
     <title>Prueba OCR AIDA</title>
     <style>
-        body { font-family: Arial; max-width: 800px; margin: 0 auto; padding: 20px; }
-        #resultado { white-space: pre-wrap; background: #f5f5f5; padding: 10px; border-radius: 5px; }
-        .loading { display: none; color: blue; }
+        body { font-family: Arial; max-width: 900px; margin: 0 auto; padding: 20px; background: #f9f9f9; }
+        h1 { color: #333; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        label { display: block; margin-top: 10px; font-weight: bold; }
+        select, input[type="file"], button { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { background: #0070f3; color: white; border: none; cursor: pointer; font-size: 16px; }
+        button:hover { background: #0051b3; }
+        #resultado { white-space: pre-wrap; background: #f5f5f5; padding: 15px; border-radius: 5px; border: 1px solid #ddd; max-height: 500px; overflow: auto; }
+        .loading { display: none; color: #0070f3; font-weight: bold; margin: 10px 0; }
+        .info { font-size: 0.9em; color: #666; margin-top: 10px; }
     </style>
 </head>
 <body>
     <h1>📄 Prueba OCR - Formularios Educativos</h1>
     
-    <form id="ocrForm">
-        <input type="file" id="imagen" accept="image/*" required>
-        <br><br>
-        <button type="submit">Procesar con OCR Mejorado</button>
-    </form>
+    <div class="card">
+        <form id="ocrForm">
+            <label for="endpoint">Endpoint:</label>
+            <select id="endpoint" name="endpoint">
+                <option value="documento_completo" selected>documento_completo (automático)</option>
+                <option value="basico">básico (sin preprocesamiento)</option>
+                <option value="preprocesado">preprocesado (limpieza)</option>
+                <option value="segmentado">segmentado (por regiones)</option>
+                <option value="tabla">tabla (extracción de tablas)</option>
+            </select>
+
+            <label for="lang">Idioma:</label>
+            <select id="lang" name="lang">
+                <option value="spa" selected>Español</option>
+                <option value="eng">Inglés</option>
+                <option value="spa+eng">Español + Inglés</option>
+            </select>
+
+            <label for="imagen">Selecciona una imagen:</label>
+            <input type="file" id="imagen" accept="image/*" required>
+
+            <button type="submit">Procesar con OCR</button>
+        </form>
+        <div class="info">⏱️ Timeout del servidor: 360 segundos. Imágenes comprimidas automáticamente a ≤2MB.</div>
+    </div>
     
-    <div id="loading" class="loading">⏳ Procesando...</div>
+    <div id="loading" class="loading">⏳ Procesando... (puede tomar varios segundos)</div>
     
     <h3>Resultado:</h3>
     <pre id="resultado"></pre>
-    
+
     <script>
         document.getElementById('ocrForm').onsubmit = async (e) => {
             e.preventDefault();
             
+            const endpoint = document.getElementById('endpoint').value;
+            const lang = document.getElementById('lang').value;
+            const fileInput = document.getElementById('imagen');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('Por favor selecciona una imagen');
+                return;
+            }
+
             const formData = new FormData();
-            const file = document.getElementById('imagen').files[0];
             formData.append('file', file);
+            formData.append('lang', lang);
+            
+            // Para endpoint 'preprocesado' añadimos parámetros adicionales (opcional)
+            if (endpoint === 'preprocesado') {
+                formData.append('correccion_skew', 'true');
+                formData.append('metodo_binarizacion', 'sauvola');
+            }
+            if (endpoint === 'segmentado') {
+                formData.append('detectar_tablas', 'true');
+            }
+            if (endpoint === 'tabla') {
+                formData.append('formato_salida', 'json');
+            }
+            if (endpoint === 'documento_completo') {
+                formData.append('optimizar_para', 'texto'); // o 'tablas', 'mixto'
+            }
+
+            const url = `https://api-ocr-g2g4.onrender.com/ocr/${endpoint}`;
             
             document.getElementById('loading').style.display = 'block';
             document.getElementById('resultado').textContent = '';
             
             try {
-                const response = await fetch('https://api-ocr-g2g4.onrender.com/ocr/documento_completo', {
+                const response = await fetch(url, {
                     method: 'POST',
                     body: formData
                 });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Error ${response.status}: ${errorText}`);
+                }
                 
                 const data = await response.json();
                 document.getElementById('resultado').textContent = 
                     JSON.stringify(data, null, 2);
             } catch (error) {
                 document.getElementById('resultado').textContent = 
-                    'Error: ' + error.message;
+                    '❌ Error: ' + error.message;
             } finally {
                 document.getElementById('loading').style.display = 'none';
             }

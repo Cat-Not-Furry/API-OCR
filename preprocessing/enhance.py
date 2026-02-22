@@ -106,14 +106,26 @@ def apply_clahe(image: np.ndarray) -> np.ndarray:
     return enhanced
 
 
-def deskew_and_clean(image: np.ndarray) -> np.ndarray:
-    # 0. Detectar y corregir perspectiva
-    img = detect_document_contour(image)
-    # 1. Corregir inclinación residual
-    img = correct_skew(img)
-
+def deskew_and_clean(
+    image: np.ndarray, binarization_method: str = "auto"
+) -> np.ndarray:
+    img = correct_skew(image)
+    # Mejora de contraste (opcional, se puede activar con flag)
+    img = cv2.convertScaleAbs(img, alpha=1.3, beta=0)
+    img = remove_shadows(img)
     img = remove_noise(img, method="nlmeans")
-    img = binarize(img, method="sauvola" if img.mean() < 200 else "adaptive")
+
+    # Binarización
+    if binarization_method == "adaptive":
+        img = binarize(img, method="adaptive")
+    elif binarization_method == "sauvola":
+        img = binarize(img, method="sauvola")
+    else:  # auto
+        img = binarize(img, method="sauvola" if img.mean() < 200 else "adaptive")
+
+    # Cerrar pequeños huecos en caracteres
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel)
     return img
 
 
