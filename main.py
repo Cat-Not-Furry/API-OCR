@@ -161,14 +161,14 @@ async def root():
 async def ocr_basico(file: UploadFile = File(...), lang: str = Form(DEFAULT_LANG)):
     """Endpoint simple sin preprocesamiento."""
     validate_file(file)
-    img = await read_image(file, compress=True, max_size_mb=2.0)
+    img = await read_image(file, compress=True, max_size_mb=1.0)
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
         cv2.imwrite(tmp.name, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         tmp_path = tmp.name
 
     try:
-        text = run_tesseract(tmp_path, lang, psm=6)
+        text = run_tesseract(tmp_path, lang, psm=3)
         text = clean_text(text)
         estructurado = estructurar_texto_ocr(text)  # <-- NUEVO
     finally:
@@ -192,7 +192,7 @@ async def ocr_con_preprocesamiento(
 ):
     """OCR con pipeline de limpieza optimizado."""
     validate_file(file)
-    img = await read_image(file, compress=True, max_size_mb=2.0)
+    img = await read_image(file, compress=True, max_size_mb=1.0)
 
     resultado = await procesar_con_preprocesamiento(
         img, lang, correccion_skew, metodo_binarizacion
@@ -223,7 +223,7 @@ async def ocr_con_segmentacion(
 ):
     """Segmenta la imagen y aplica OCR específico por región."""
     validate_file(file)
-    img = await read_image(file, compress=True, max_size_mb=2.0)
+    img = await read_image(file, compress=True, max_size_mb=1.0)
 
     resultado = await procesar_con_segmentacion(img, lang, detectar_tablas)
 
@@ -253,7 +253,7 @@ async def ocr_tabla(
     (Este endpoint no se había incluido en la versión anterior, lo añadimos para completar)
     """
     validate_file(file)
-    img = await read_image(file, compress=True, max_size_mb=2.0)
+    img = await read_image(file, compress=True, max_size_mb=1.0)
 
     # Usamos la función auxiliar de tabla (simplificada)
     resultado = await procesar_como_tabla(img, lang)
@@ -281,7 +281,7 @@ async def ocr_documento_completo(
     """Endpoint inteligente que elige el mejor método según el documento."""
     try:
         validate_file(file)
-        img = await read_image(file, compress=True, max_size_mb=2.0)
+        img = await read_image(file, compress=True, max_size_mb=1.0)
 
         # Análisis rápido del documento
         gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
