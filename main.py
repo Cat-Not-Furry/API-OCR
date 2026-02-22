@@ -340,6 +340,71 @@ async def ocr_documento_completo(
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
+# main.py (añadir al final, antes de if __name__ ...)
+
+
+@app.post("/ocr/checkboxes")
+async def ocr_con_checkboxes(
+    file: UploadFile = File(...),
+    lang: str = Form(DEFAULT_LANG),
+    detectar_checkboxes: bool = Form(True),
+    asociar_texto: bool = Form(True),
+):
+    """
+    Detecta checkboxes, determina si están marcados y los asocia con el texto cercano.
+    """
+    validate_file(file)
+    img = await read_image(file, compress=True, max_size_mb=2.0)
+
+    # 1. Preprocesar para mejorar detección
+    processed = deskew_and_clean(img.copy())
+
+    # 2. Detectar checkboxes
+    checkboxes = detect_checkboxes(processed)
+
+    # 3. Obtener regiones de texto para asociación
+    if asociar_texto and checkboxes:
+        # Usar segmentación para obtener regiones de texto
+        from preprocessing.detection import segment_regions
+
+        regions = segment_regions(processed)
+        text_regions = [r for r in regions if r["type"] == "text"]
+        # Extraer texto de cada región (usar OCR rápido con PSM 4)
+        from ocr.engine import ocr_region
+
+        for tr in text_regions:
+            try:
+                tr["text"] = ocr_region(img, tr, lang)
+            except Exception as e:
+                tr["text"] = ""
+                logger.debug(f"Error OCR región texto: {e}")
+
+        checkboxes = associate_checkboxes_with_text(checkboxes, text_regions)
+
+    # 4. Opcional: extraer texto completo del documento
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+        cv2.imwrite(tmp.name, cv2.cvtColor(processed, cv2.COLOR_RGB2BGR))
+        tmp_path = tmp.name
+    try:
+        full_text = run_tesseract(tmp_path, lang, psm=6)
+        full_text = clean_text(full_text)
+    finally:
+        os.unlink(tmp_path)
+
+    # 5. Estructurar el texto (horarios, días, etc.)
+    structured = estructurar_texto_ocr(full_text)
+
+    return {
+        "success": True,
+        "filename": file.filename,
+        "num_checkboxes": len(checkboxes),
+        "checkboxes": checkboxes,
+        "full_text": full_text,
+        "texto_estructurado": structured,
+        "metadata": {"language": lang, "detectar_checkboxes": detectar_checkboxes},
+    }
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)

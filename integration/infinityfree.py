@@ -1,46 +1,43 @@
-# integration/inifinityfree.py
-import requests
-import json
-import logging
-from typing import Dict, Any
+# main.py (dentro de algún endpoint, por ejemplo /ocr/checkboxes)
+from integration.infinityfree import InfinityFreeClient
 
-logger = logging.getLogger(__name__)
+# Configurar cliente (puedes poner la URL en config.py)
+INFINITY_URL = os.getenv(
+    "INFINITY_URL", "https://keydash-user-admin.wuaze.com/other_test.html"
+)
+INFINITY_API_KEY = os.getenv("INFINITY_API_KEY", "")
+infinity_client = InfinityFreeClient(INFINITY_URL, INFINITY_API_KEY)
 
 
-class InfinityFreeClient:
-    """Cliente para enviar resultados a InfinityFree (para implementar)."""
+@app.post("/ocr/checkboxes")
+async def ocr_con_checkboxes(
+    file: UploadFile = File(...),
+    lang: str = Form(DEFAULT_LANG),
+    detectar_checkboxes: bool = Form(True),
+    asociar_texto: bool = Form(True),
+    enviar_a_infinity: bool = Form(False),  # <-- nuevo parámetro
+):
+    # ... (código de procesamiento existente) ...
 
-    def __init__(self, base_url: str, api_key: str = None):
-        self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
-        self.session = requests.Session()
-        if api_key:
-            self.session.headers.update({"Authorization": f"Bearer {api_key}"})
+    result = {
+        "success": True,
+        "filename": file.filename,
+        "num_checkboxes": len(checkboxes),
+        "checkboxes": checkboxes,
+        "full_text": full_text,
+        "texto_estructurado": structured,
+        "metadata": {"language": lang, "detectar_checkboxes": detectar_checkboxes},
+    }
 
-    async def send_ocr_result(
-        self, filename: str, text: str, metadata: Dict[str, Any]
-    ) -> bool:
-        """Envía el resultado del OCR al servidor InfinityFree."""
+    if enviar_a_infinity:
         try:
-            payload = {
-                "filename": filename,
-                "text": text,
-                "metadata": metadata,
-                "timestamp": __import__("datetime").datetime.now().isoformat(),
-            }
-
-            # TODO: Ajustar endpoint según tu implementación en InfinityFree
-            response = self.session.post(
-                f"{self.base_url}/api/ocr-callback", json=payload, timeout=30
+            # Enviar checkboxes y texto
+            infinity_client.send_checkboxes(
+                checkboxes, file.filename, result["metadata"]
             )
-
-            if response.status_code == 200:
-                logger.info(f"Resultado enviado exitosamente para {filename}")
-                return True
-            else:
-                logger.error(f"Error enviando resultado: {response.status_code}")
-                return False
-
+            infinity_client.send_text(full_text, structured, file.filename)
         except Exception as e:
-            logger.error(f"Error en envío a InfinityFree: {e}")
-            return False
+            logger.error(f"Error enviando a InfinityFree: {e}")
+            # No interrumpimos la respuesta, solo logueamos
+
+    return result

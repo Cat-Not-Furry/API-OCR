@@ -6,6 +6,9 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent.absolute()
 TESSERACT_PATH = os.path.join(BASE_DIR, "bin", "tesseract")
 TESSDATA_PATH = os.path.join(BASE_DIR, "tessdata")
+INFINITYFREE_URL = os.getenv(
+    "INFINITYFREE_URL", "http://default-domain.infinityfreeapp.com"
+)
 
 # Límites
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB

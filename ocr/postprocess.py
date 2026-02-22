@@ -134,14 +134,14 @@ def corregir_ortografia(texto: str, idioma: str = "es") -> str:
 
 
 def estructurar_texto_ocr(
-    texto_bruto: str, corregir_ortografia_flag: bool = False
+    texto_bruto: str, correct_spelling: bool = False
 ) -> Dict[str, Any]:
     """
     Función principal que orquesta la limpieza y extracción de información.
-    Devuelve un diccionario con texto limpio y listas de horarios, días, materiales y notas.
+    Si correct_spelling es True, aplica corrección ortográfica.
     """
     texto_limpio = limpiar_texto_ocr(texto_bruto)
-    if corregir_ortografia_flag:
+    if correct_spelling:
         texto_limpio = corregir_ortografia(texto_limpio)
     return {
         "texto_limpio": texto_limpio,
@@ -149,6 +149,5 @@ def estructurar_texto_ocr(
         "dias": extraer_dias(texto_limpio),
         "materiales": extraer_materiales(texto_limpio),
         "notas": extraer_notas(texto_limpio),
-        # Si se desea incluir fechas completas, descomentar la siguiente línea:
         "fechas": extraer_fechas(texto_limpio),
     }
