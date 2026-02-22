@@ -1,4 +1,9 @@
 # main.py (dentro de algún endpoint, por ejemplo /ocr/checkboxes)
+import os
+import requests
+import json
+import logging
+from typing import Dict, Any
 
 # Configurar cliente (puedes poner la URL en config.py)
 INFINITY_URL = os.getenv("INFINITY_URL", "https://keydash-user-admin.wuaze.com")
