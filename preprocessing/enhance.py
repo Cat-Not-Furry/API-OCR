@@ -3,7 +3,6 @@ import cv2
 import numpy as np
 from skimage import filters
 import logging
-from spellchecker import SpellChecker
 
 logger = logging.getLogger(__name__)
 

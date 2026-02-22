@@ -9,3 +9,4 @@ scipy==1.15.2
 pandas==2.2.3
 Pillow==11.1.0
 requests==2.32.3
+pyspellchecker==0.8.2

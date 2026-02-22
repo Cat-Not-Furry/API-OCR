@@ -23,7 +23,7 @@ from preprocessing.enhance import (
 )
 from preprocessing.detection import detect_tables, segment_regions
 from ocr.engine import run_tesseract, ocr_region
-from ocr.postprocess import clean_text
+from ocr.postprocess import clean_text, estructurar_texto_ocr  # <-- NUEVA IMPORTACIÓN
 from integration.infinityfree import InfinityFreeClient
 
 # Configurar logging
@@ -170,6 +170,7 @@ async def ocr_basico(file: UploadFile = File(...), lang: str = Form(DEFAULT_LANG
     try:
         text = run_tesseract(tmp_path, lang, psm=6)
         text = clean_text(text)
+        estructurado = estructurar_texto_ocr(text)  # <-- NUEVO
     finally:
         os.unlink(tmp_path)
 
@@ -177,6 +178,7 @@ async def ocr_basico(file: UploadFile = File(...), lang: str = Form(DEFAULT_LANG
         "success": True,
         "filename": file.filename,
         "text": text,
+        "texto_estructurado": estructurado,  # <-- NUEVO
         "metadata": {"language": lang},
     }
 
@@ -196,10 +198,15 @@ async def ocr_con_preprocesamiento(
         img, lang, correccion_skew, metodo_binarizacion
     )
 
+    # Estructurar el texto obtenido
+    text = resultado["text"]
+    estructurado = estructurar_texto_ocr(text)  # <-- NUEVO
+
     return {
         "success": True,
         "filename": file.filename,
-        "text": resultado["text"],
+        "text": text,
+        "texto_estructurado": estructurado,  # <-- NUEVO
         "metadata": {
             "language": lang,
             "skew_correction": correccion_skew,
@@ -220,13 +227,48 @@ async def ocr_con_segmentacion(
 
     resultado = await procesar_con_segmentacion(img, lang, detectar_tablas)
 
+    # Estructurar el texto completo
+    texto_completo = resultado["texto_completo"]
+    estructurado = estructurar_texto_ocr(texto_completo)  # <-- NUEVO
+
     return {
         "success": True,
         "filename": file.filename,
         "num_regiones": resultado["num_regiones"],
-        "texto_completo": resultado["texto_completo"],
+        "texto_completo": texto_completo,
+        "texto_estructurado": estructurado,  # <-- NUEVO
         "regiones": resultado["regiones"],
         "metadata": {"language": lang, "detectar_tablas": detectar_tablas},
+    }
+
+
+@app.post("/ocr/tabla")
+async def ocr_tabla(
+    file: UploadFile = File(...),
+    lang: str = Form(DEFAULT_LANG),
+    formato_salida: str = Form("json"),
+):
+    """
+    Especializado en extraer tablas: detecta la tabla, segmenta celdas y devuelve estructura.
+    (Este endpoint no se había incluido en la versión anterior, lo añadimos para completar)
+    """
+    validate_file(file)
+    img = await read_image(file)
+
+    # Usamos la función auxiliar de tabla (simplificada)
+    resultado = await procesar_como_tabla(img, lang)
+    if "error" in resultado:
+        return {"success": False, "error": resultado["error"]}
+
+    tabla_texto = resultado["tabla_texto"]
+    estructurado = estructurar_texto_ocr(tabla_texto)  # <-- NUEVO
+
+    return {
+        "success": True,
+        "filename": file.filename,
+        "tabla_texto": tabla_texto,
+        "texto_estructurado": estructurado,  # <-- NUEVO
+        "bbox": resultado["bbox"],
     }
 
 
@@ -269,10 +311,23 @@ async def ocr_documento_completo(
                 img, lang, correccion_skew=True, metodo_binarizacion="sauvola"
             )
 
+        # Determinar qué tipo de texto se obtuvo y estructurarlo
+        if "text" in resultado:
+            texto = resultado["text"]
+        elif "texto_completo" in resultado:
+            texto = resultado["texto_completo"]
+        elif "tabla_texto" in resultado:
+            texto = resultado["tabla_texto"]
+        else:
+            texto = ""
+
+        estructurado = estructurar_texto_ocr(texto) if texto else {}
+
         return {
             "success": True,
             "filename": file.filename,
             **resultado,
+            "texto_estructurado": estructurado,  # <-- NUEVO
             "metadata": {
                 "language": lang,
                 "optimizacion": optimizar_para,
