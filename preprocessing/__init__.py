@@ -7,6 +7,7 @@ from .enhance import (
     deskew_and_clean,
 )
 from .detection import detect_tables, extract_table_cells, segment_regions
+from .compression import ImageCompressor, compress_image  # <-- NUEVO
 
 __all__ = [
     "correct_skew",
@@ -17,4 +18,6 @@ __all__ = [
     "detect_tables",
     "extract_table_cells",
     "segment_regions",
+    "ImageCompressor",
+    "compress_image",
 ]
