@@ -1,5 +1,6 @@
 # main.py
 import os
+import cv2
 import logging
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
