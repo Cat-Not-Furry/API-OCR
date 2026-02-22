@@ -134,14 +134,14 @@ def corregir_ortografia(texto: str, idioma: str = "es") -> str:
 
 
 def estructurar_texto_ocr(
-    texto_bruto: str, correct_spelling: bool = False
-) -> Dict[str, Any]:
+    texto_bruto: str, corregir_ortografia_flag: bool = False
+) -> dict:
     """
     Función principal que orquesta la limpieza y extracción de información.
     Si correct_spelling es True, aplica corrección ortográfica.
     """
     texto_limpio = limpiar_texto_ocr(texto_bruto)
-    if correct_spelling:
+    if corregir_ortografia_flag:
         texto_limpio = corregir_ortografia(texto_limpio)
     return {
         "texto_limpio": texto_limpio,
