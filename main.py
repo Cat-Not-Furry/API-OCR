@@ -162,60 +162,30 @@ async def root():
 
 
 @app.post("/ocr/basico")
-async def ocr_basico(file: UploadFile = File(...), lang: str = Form(DEFAULT_LANG)):
-    """Endpoint simple sin preprocesamiento."""
+async def ocr_basico(
+    file: UploadFile = File(...),
+    lang: str = Form(DEFAULT_LANG),
+    correct_spelling: bool = Form(False),  # <-- NUEVO
+):
     validate_file(file)
     img = await read_image(file, compress=True, max_size_mb=2.0)
-
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
         cv2.imwrite(tmp.name, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         tmp_path = tmp.name
-
     try:
         text = run_tesseract(tmp_path, lang, psm=6)
         text = clean_text(text)
-        estructurado = estructurar_texto_ocr(text)  # <-- NUEVO
+        estructurado = estructurar_texto_ocr(
+            text, corregir_ortografia_flag=correct_spelling
+        )
     finally:
         os.unlink(tmp_path)
-
     return {
         "success": True,
         "filename": file.filename,
         "text": text,
-        "texto_estructurado": estructurado,  # <-- NUEVO
-        "metadata": {"language": lang},
-    }
-
-
-@app.post("/ocr/preprocesado")
-async def ocr_con_preprocesamiento(
-    file: UploadFile = File(...),
-    lang: str = Form(DEFAULT_LANG),
-    correccion_skew: bool = Form(True),
-    metodo_binarizacion: str = Form("sauvola"),
-):
-    """OCR con pipeline de limpieza optimizado."""
-    validate_file(file)
-    img = await read_image(file, compress=True, max_size_mb=2.0)
-
-    resultado = await procesar_con_preprocesamiento(
-        img, lang, correccion_skew, metodo_binarizacion
-    )
-
-    # Estructurar el texto obtenido
-    text = resultado["text"]
-    estructurado = estructurar_texto_ocr(text)  # <-- NUEVO
-
-    return {
-        "success": True,
-        "filename": file.filename,
-        "text": text,
-        "texto_estructurado": estructurado,  # <-- NUEVO
-        "metadata": {
-            "language": lang,
-            "skew_correction": correccion_skew,
-            "binarization": metodo_binarizacion,
-        },
+        "texto_estructurado": estructurado,
+        "metadata": {"language": lang, "correct_spelling": correct_spelling},
     }
 
 
@@ -224,25 +194,30 @@ async def ocr_con_segmentacion(
     file: UploadFile = File(...),
     lang: str = Form(DEFAULT_LANG),
     detectar_tablas: bool = Form(True),
+    correct_spelling: bool = Form(False),  # <-- NUEVO
 ):
-    """Segmenta la imagen y aplica OCR específico por región."""
     validate_file(file)
     img = await read_image(file, compress=True, max_size_mb=2.0)
 
     resultado = await procesar_con_segmentacion(img, lang, detectar_tablas)
 
-    # Estructurar el texto completo
     texto_completo = resultado["texto_completo"]
-    estructurado = estructurar_texto_ocr(texto_completo)  # <-- NUEVO
+    estructurado = estructurar_texto_ocr(
+        texto_completo, corregir_ortografia_flag=correct_spelling
+    )
 
     return {
         "success": True,
         "filename": file.filename,
         "num_regiones": resultado["num_regiones"],
         "texto_completo": texto_completo,
-        "texto_estructurado": estructurado,  # <-- NUEVO
+        "texto_estructurado": estructurado,
         "regiones": resultado["regiones"],
-        "metadata": {"language": lang, "detectar_tablas": detectar_tablas},
+        "metadata": {
+            "language": lang,
+            "detectar_tablas": detectar_tablas,
+            "correct_spelling": correct_spelling,
+        },
     }
 
 
@@ -251,28 +226,31 @@ async def ocr_tabla(
     file: UploadFile = File(...),
     lang: str = Form(DEFAULT_LANG),
     formato_salida: str = Form("json"),
+    correct_spelling: bool = Form(False),  # <-- NUEVO
 ):
-    """
-    Especializado en extraer tablas: detecta la tabla, segmenta celdas y devuelve estructura.
-    (Este endpoint no se había incluido en la versión anterior, lo añadimos para completar)
-    """
     validate_file(file)
     img = await read_image(file, compress=True, max_size_mb=2.0)
 
-    # Usamos la función auxiliar de tabla (simplificada)
     resultado = await procesar_como_tabla(img, lang)
     if "error" in resultado:
         return {"success": False, "error": resultado["error"]}
 
     tabla_texto = resultado["tabla_texto"]
-    estructurado = estructurar_texto_ocr(tabla_texto)  # <-- NUEVO
+    estructurado = estructurar_texto_ocr(
+        tabla_texto, corregir_ortografia_flag=correct_spelling
+    )
 
     return {
         "success": True,
         "filename": file.filename,
         "tabla_texto": tabla_texto,
-        "texto_estructurado": estructurado,  # <-- NUEVO
+        "texto_estructurado": estructurado,
         "bbox": resultado["bbox"],
+        "metadata": {
+            "language": lang,
+            "formato_salida": formato_salida,
+            "correct_spelling": correct_spelling,
+        },
     }
 
 
@@ -281,8 +259,8 @@ async def ocr_documento_completo(
     file: UploadFile = File(...),
     lang: str = Form(DEFAULT_LANG),
     optimizar_para: str = Form("texto"),
+    correct_spelling: bool = Form(False),  # <-- NUEVO
 ):
-    """Endpoint inteligente que elige el mejor método según el documento."""
     try:
         validate_file(file)
         img = await read_image(file, compress=True, max_size_mb=2.0)
@@ -304,7 +282,6 @@ async def ocr_documento_completo(
         if num_horizontal > 10 or optimizar_para == "tablas":
             resultado = await procesar_como_tabla(img, lang)
             if "error" in resultado:
-                # Si falla como tabla, intentar como segmentado
                 resultado = await procesar_con_segmentacion(
                     img, lang, detectar_tablas=True
                 )
@@ -315,7 +292,7 @@ async def ocr_documento_completo(
                 img, lang, correccion_skew=True, metodo_binarizacion="sauvola"
             )
 
-        # Determinar qué tipo de texto se obtuvo y estructurarlo
+        # Determinar qué tipo de texto se obtuvo
         if "text" in resultado:
             texto = resultado["text"]
         elif "texto_completo" in resultado:
@@ -325,19 +302,28 @@ async def ocr_documento_completo(
         else:
             texto = ""
 
-        estructurado = estructurar_texto_ocr(texto) if texto else {}
+        estructurado = (
+            estructurar_texto_ocr(texto, corregir_ortografia_flag=correct_spelling)
+            if texto
+            else {}
+        )
 
         return {
             "success": True,
             "filename": file.filename,
             **resultado,
-            "texto_estructurado": estructurado,  # <-- NUEVO
+            "texto_estructurado": estructurado,
             "metadata": {
                 "language": lang,
                 "optimizacion": optimizar_para,
                 "lineas_detectadas": num_horizontal,
+                "correct_spelling": correct_spelling,
             },
         }
+
+    except Exception as e:
+        logger.error("Error en /ocr/documento_completo", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
     except Exception as e:
         logger.error("Error en /ocr/documento_completo", exc_info=True)
