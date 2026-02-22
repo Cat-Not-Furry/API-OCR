@@ -23,7 +23,7 @@ from preprocessing.enhance import (
 from preprocessing.detection import detect_tables, segment_regions
 from ocr.engine import run_tesseract, ocr_region
 from ocr.postprocess import clean_text
-from integration.inifinityfree import InfinityFreeClient
+from integration.infinityfree import InfinityFreeClient
 
 # Configurar logging
 setup_logging()
