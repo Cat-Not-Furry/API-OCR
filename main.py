@@ -270,12 +270,17 @@ def extract_table_cells(image: np.ndarray, bbox: tuple) -> List[np.ndarray]:
 # ==================== SEGMENTACIÓN POR REGIONES ====================
 def segment_regions(image: np.ndarray) -> List[Dict[str, Any]]:
     """
-    Segmenta la imagen en regiones (texto, tablas, imágenes) usando análisis de componentes conectados.
+    Segmenta la imagen en regiones. Acepta RGB (3 canales) o gris (1 canal).
     """
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    # Si es RGB, convertir a gris; si ya es gris, usarla directamente
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = image
+
     _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    # Dilatar para unir componentes cercanos (párrafos)
+    # Dilatar para unir componentes cercanos
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
     dilated = cv2.dilate(thresh, kernel, iterations=3)
 
@@ -284,13 +289,13 @@ def segment_regions(image: np.ndarray) -> List[Dict[str, Any]]:
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
         area = w * h
-        if area < 500:  # ignorar ruido
+        if area < 500:
             continue
-        # Clasificar por densidad de píxeles y aspecto
+        # Clasificar usando la imagen en gris (thresh)
         roi = thresh[y : y + h, x : x + w]
-        text_density = np.sum(roi) / (w * h * 255)  # proporción de píxeles de texto
+        text_density = np.sum(roi) / (w * h * 255)
         aspect = w / h
-        if aspect > 3 and h < 50:  # posible línea separadora
+        if aspect > 3 and h < 50:
             region_type = "line"
         elif text_density > 0.2:
             region_type = "text"
