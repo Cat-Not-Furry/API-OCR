@@ -95,8 +95,13 @@ def run_tesseract(
 
 # ==================== PREPROCESAMIENTO ====================
 def correct_skew(image: np.ndarray) -> np.ndarray:
-    """Corrige la inclinación del documento usando transformada de Hough."""
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    """Corrige la inclinación del documento. Acepta RGB (3 canales) o gris (1 canal)."""
+    # Si es RGB, convertir a gris; si ya es gris, usarla directamente
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = image
+
     edges = cv2.Canny(gray, 50, 150, apertureSize=3)
     lines = cv2.HoughLines(edges, 1, np.pi / 180, 200)
     if lines is not None:
@@ -106,7 +111,7 @@ def correct_skew(image: np.ndarray) -> np.ndarray:
             angles.append(angle)
         median_angle = np.median(angles)
         if abs(median_angle) > 0.5:
-            (h, w) = image.shape[:2]
+            (h, w) = image.shape[:2]  # usa la imagen original (puede ser RGB o gris)
             center = (w // 2, h // 2)
             M = cv2.getRotationMatrix2D(center, median_angle, 1.0)
             rotated = cv2.warpAffine(
