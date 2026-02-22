@@ -25,6 +25,10 @@ from preprocessing.detection import detect_tables, segment_regions
 from ocr.engine import run_tesseract, ocr_region
 from ocr.postprocess import clean_text, estructurar_texto_ocr  # <-- NUEVA IMPORTACIÓN
 from integration.infinityfree import InfinityFreeClient
+from integration.infinityfree import InfinityFreeClient
+from config import INFINITYFREE_URL  # Asegúrate de definir esta variable en config.py
+
+infinity_client = InfinityFreeClient(INFINITYFREE_URL)
 
 # Configurar logging
 setup_logging()

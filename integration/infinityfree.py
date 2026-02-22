@@ -1,45 +1,43 @@
-# main.py (dentro de algún endpoint, por ejemplo /ocr/checkboxes)
 import os
 import requests
 import json
 import logging
 from typing import Dict, Any
 
-# Configurar cliente (puedes poner la URL en config.py)
-INFINITY_URL = os.getenv("INFINITY_URL", "https://keydash-user-admin.wuaze.com")
-INFINITY_API_KEY = os.getenv("INFINITY_API_KEY", "")
-infinity_client = InfinityFreeClient(INFINITY_URL, INFINITY_API_KEY)
+logger = logging.getLogger(__name__)
 
 
-@app.post("/ocr/checkboxes")
-async def ocr_con_checkboxes(
-    file: UploadFile = File(...),
-    lang: str = Form(DEFAULT_LANG),
-    detectar_checkboxes: bool = Form(True),
-    asociar_texto: bool = Form(True),
-    enviar_a_infinity: bool = Form(False),  # <-- nuevo parámetro
-):
-    # ... (código de procesamiento existente) ...
+class InfinityFreeClient:
+    """Cliente para enviar resultados a InfinityFree."""
 
-    result = {
-        "success": True,
-        "filename": file.filename,
-        "num_checkboxes": len(checkboxes),
-        "checkboxes": checkboxes,
-        "full_text": full_text,
-        "texto_estructurado": structured,
-        "metadata": {"language": lang, "detectar_checkboxes": detectar_checkboxes},
-    }
+    def __init__(self, base_url: str, api_key: str = None):
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.session = requests.Session()
+        if api_key:
+            self.session.headers.update({"Authorization": f"Bearer {api_key}"})
 
-    if enviar_a_infinity:
+    async def send_ocr_result(
+        self, filename: str, text: str, metadata: Dict[str, Any]
+    ) -> bool:
         try:
-            # Enviar checkboxes y texto
-            infinity_client.send_checkboxes(
-                checkboxes, file.filename, result["metadata"]
+            payload = {
+                "filename": filename,
+                "text": text,
+                "metadata": metadata,
+                "timestamp": __import__("datetime").datetime.now().isoformat(),
+            }
+            response = self.session.post(
+                f"{self.base_url}/callback.php", json=payload, timeout=30
             )
-            infinity_client.send_text(full_text, structured, file.filename)
+            if response.status_code == 200:
+                logger.info(f"Resultado enviado exitosamente para {filename}")
+                return True
+            else:
+                logger.error(
+                    f"Error enviando resultado: {response.status_code} - {response.text}"
+                )
+                return False
         except Exception as e:
-            logger.error(f"Error enviando a InfinityFree: {e}")
-            # No interrumpimos la respuesta, solo logueamos
-
-    return result
+            logger.error(f"Error en envío a InfinityFree: {e}")
+            return False
