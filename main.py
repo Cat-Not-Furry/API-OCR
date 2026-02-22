@@ -192,10 +192,14 @@ def deskew_and_clean(image: np.ndarray) -> np.ndarray:
 # ==================== DETECCIÓN DE TABLAS ====================
 def detect_tables(image: np.ndarray) -> List[Dict[str, Any]]:
     """
-    Detecta regiones de tablas basadas en líneas horizontales y verticales.
-    Retorna lista de dict con bounding boxes (x, y, w, h) y tipo.
+    Detecta regiones de tablas. Acepta RGB (3 canales) o gris (1 canal).
     """
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    # Si es RGB, convertir a gris; si ya es gris, usarla directamente
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = image
+
     # Umbral para resaltar líneas
     thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
 
@@ -235,13 +239,13 @@ def detect_tables(image: np.ndarray) -> List[Dict[str, Any]]:
 
 
 def extract_table_cells(image: np.ndarray, bbox: tuple) -> List[np.ndarray]:
-    """
-    Segmenta una región de tabla en celdas individuales.
-    Retorna lista de imágenes de celdas.
-    """
     x, y, w, h = bbox
     roi = image[y : y + h, x : x + w]
-    gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
+    # Si roi es RGB, convertir a gris; si ya es gris, usarla directamente
+    if len(roi.shape) == 3:
+        gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = roi
     thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
 
     # Detectar líneas divisorias (horizontal y vertical)
