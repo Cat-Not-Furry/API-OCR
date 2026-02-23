@@ -31,7 +31,7 @@ def run_tesseract(
     env = os.environ.copy()
     env["TESSDATA_PREFIX"] = TESSDATA_PATH
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=360, env=env)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=420, env=env)
     if result.returncode != 0:
         logger.error(f"Tesseract error: {result.stderr}")
         raise RuntimeError(f"Error en OCR: {result.stderr}")
