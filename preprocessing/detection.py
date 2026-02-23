@@ -90,3 +90,49 @@ def segment_regions(image: np.ndarray) -> List[Dict[str, Any]]:
             {"bbox": (x, y, w, h), "type": region_type, "confidence": text_density}
         )
     return regions
+
+
+def detect_text_fields(image: np.ndarray) -> List[Dict[str, Any]]:
+    """
+    Detecta campos de texto (líneas horizontales) como las de los formularios.
+    Retorna lista de dict con bbox de la línea y región para extraer etiqueta.
+    """
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = image
+
+    # Detectar bordes
+    edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+    # Detectar líneas usando HoughLinesP
+    lines = cv2.HoughLinesP(
+        edges, 1, np.pi / 180, threshold=50, minLineLength=100, maxLineGap=10
+    )
+
+    fields = []
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            # Verificar que sea horizontal y larga
+            if abs(y2 - y1) < 10 and (x2 - x1) > 80:
+                # Agrupar líneas cercanas (misma línea)
+                # Por simplicidad, tomamos el bounding box
+                x = min(x1, x2)
+                y = min(y1, y2)
+                w = abs(x2 - x1)
+                h = abs(y2 - y1)
+                # Añadir un margen para capturar la etiqueta
+                label_region = (
+                    max(0, x - 100),
+                    max(0, y - 30),
+                    w + 100,
+                    h + 30,
+                )  # arriba/izquierda
+                fields.append(
+                    {
+                        "line_bbox": (x, y, w, h),
+                        "label_bbox": label_region,
+                        "tipo": "text_field",
+                    }
+                )
+    return fields

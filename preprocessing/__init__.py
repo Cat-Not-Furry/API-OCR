@@ -7,7 +7,12 @@ from .enhance import (
     deskew_and_clean,
     detect_document_contour,
 )
-from .detection import detect_tables, extract_table_cells, segment_regions
+from .detection import (
+    detect_tables,
+    extract_table_cells,
+    segment_regions,
+    detect_text_fields,
+)
 from .compression import ImageCompressor, compress_image
 from .checkbox import detect_checkboxes, associate_checkboxes_with_text  # <-- NUEVO
 
@@ -25,4 +30,5 @@ __all__ = [
     "compress_image",
     "detect_checkboxes",
     "associate_checkboxes_with_text",
+    "detect_text_fields",
 ]

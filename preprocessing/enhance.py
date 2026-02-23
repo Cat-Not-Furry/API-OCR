@@ -1,6 +1,9 @@
 # preprocessing/enhance.py
 import cv2
 import numpy as np
+import tempfile
+from ocr.engine import run_tesseract
+from spellchecker import SpellChecker
 from skimage import filters
 import logging
 

@@ -24,7 +24,8 @@ from preprocessing.enhance import (
 from preprocessing.detection import detect_tables, segment_regions
 from ocr.engine import run_tesseract, ocr_region
 from ocr.postprocess import clean_text, estructurar_texto_ocr  # <-- NUEVA IMPORTACIÓN
-from integration.infinityfree import InfinityFreeClient
+from preprocessing.detection import detect_text_fields
+from preprocessing.checkbox import detect_checkboxes, associate_checkboxes_with_text
 from integration.infinityfree import InfinityFreeClient
 from config import INFINITYFREE_URL  # Asegúrate de definir esta variable en config.py
 
@@ -325,10 +326,6 @@ async def ocr_documento_completo(
         logger.error("Error en /ocr/documento_completo", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
-    except Exception as e:
-        logger.error("Error en /ocr/documento_completo", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
-
 
 # main.py (añadir al final, antes de if __name__ ...)
 
@@ -354,13 +351,9 @@ async def ocr_con_checkboxes(
 
     # 3. Obtener regiones de texto para asociación
     if asociar_texto and checkboxes:
-        # Usar segmentación para obtener regiones de texto
-        from preprocessing.detection import segment_regions
-
         regions = segment_regions(processed)
         text_regions = [r for r in regions if r["type"] == "text"]
         # Extraer texto de cada región (usar OCR rápido con PSM 4)
-        from ocr.engine import ocr_region
 
         for tr in text_regions:
             try:
@@ -392,6 +385,49 @@ async def ocr_con_checkboxes(
         "full_text": full_text,
         "texto_estructurado": structured,
         "metadata": {"language": lang, "detectar_checkboxes": detectar_checkboxes},
+    }
+
+
+@app.post("/ocr/detectar-campos")
+async def ocr_detectar_campos(
+    file: UploadFile = File(...), lang: str = Form(DEFAULT_LANG)
+):
+    """
+    Detecta checkboxes y campos de texto en un formulario.
+    Devuelve listas de checkboxes con su estado y líneas de campo.
+    """
+    validate_file(file)
+    img = await read_image(file, compress=True, max_size_mb=2.0)
+
+    # Preprocesamiento ligero
+    processed = deskew_and_clean(img.copy())
+
+    # Detectar checkboxes
+    checkboxes = detect_checkboxes(processed)
+
+    # Detectar campos de texto
+    campos = detect_text_fields(processed)
+
+    # Opcional: extraer etiquetas de los campos usando OCR
+    for campo in campos:
+        x, y, w, h = campo["label_bbox"]
+        roi = img[y : y + h, x : x + w]  # usar imagen original en color
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            cv2.imwrite(tmp.name, cv2.cvtColor(roi, cv2.COLOR_RGB2BGR))
+            tmp_path = tmp.name
+        try:
+            texto = run_tesseract(tmp_path, lang, psm=7)  # PSM 7 para línea única
+            campo["etiqueta"] = clean_text(texto)
+        except:
+            campo["etiqueta"] = ""
+        finally:
+            os.unlink(tmp_path)
+
+    return {
+        "success": True,
+        "filename": file.filename,
+        "checkboxes": checkboxes,
+        "campos_texto": campos,
     }
 
 

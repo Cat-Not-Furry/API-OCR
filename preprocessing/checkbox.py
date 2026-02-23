@@ -2,8 +2,11 @@
 import cv2
 import numpy as np
 import re
+import tempfile
+import os
 from typing import List, Dict, Any, Tuple
 import logging
+from ocr.engine import run_tesseract
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +64,7 @@ def detect_checkboxes(
             checkboxes.append(
                 {
                     "bbox": (x, y, w, h),
-                    "type": "square",
+                    "tipo": "square",
                     "marked": marked,
                     "confidence": confidence,
                     "text": None,
@@ -79,7 +82,7 @@ def detect_checkboxes(
                 checkboxes.append(
                     {
                         "bbox": (x, y, w, h),
-                        "type": "circle",
+                        "tipo": "circle",
                         "marked": marked,
                         "confidence": confidence,
                         "text": None,
@@ -93,7 +96,6 @@ def detect_checkboxes(
             roi = gray[y : y + h, x : x + w]
             # Usar OCR rápido para extraer el texto del inciso
             # Nota: Necesitamos pytesseract o nuestro run_tesseract con PSM 8
-            from ocr.engine import run_tesseract
 
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                 cv2.imwrite(tmp.name, roi)
@@ -111,7 +113,7 @@ def detect_checkboxes(
                 checkboxes.append(
                     {
                         "bbox": (x, y, w, h),
-                        "type": "inciso",
+                        "tipo": "inciso",
                         "marked": False,  # Los incisos no se marcan, son etiquetas
                         "confidence": 100.0,
                         "text": text,
