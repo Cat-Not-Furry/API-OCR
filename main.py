@@ -11,6 +11,8 @@ import numpy as np
 import tempfile
 from pathlib import Path
 from ocr.engine import get_text_data
+from ocr.engine import group_words_into_lines  # ya tienes get_text_data, añade esta
+from ocr.association import build_question_answer_pairs
 
 # Importaciones de nuestros módulos
 from config import TESSERACT_PATH, TESSDATA_PATH, DEFAULT_LANG
