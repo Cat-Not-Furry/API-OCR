@@ -19,7 +19,7 @@ def validate_file(file: UploadFile):
 
 
 async def read_image(
-    file: UploadFile, compress: bool = True, max_size_mb: float = 2.0
+    file: UploadFile, compress: bool = True, max_size_mb: float = 1.5
 ) -> np.ndarray:
     """
     Lee un UploadFile y lo convierte en array numpy (RGB).

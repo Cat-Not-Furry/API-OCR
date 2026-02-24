@@ -3,11 +3,11 @@ services:
   - type: web
     name: aida-ocr-api
     runtime: python
-    plan: free
     buildCommand: |
-      apt-get update && apt-get install -y tesseract-ocr tesseract-ocr-spa
+      apt-get update
+      apt-get install -y libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libffi-dev shared-mime-info
       pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.8

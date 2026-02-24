@@ -188,3 +188,148 @@ def associate_checkboxes_with_text(
         cb["distance_to_text"] = best_dist if best_dist != float("inf") else -1
 
     return checkboxes
+
+
+def associate_checkboxes_with_text_advanced(
+    checkboxes: List[Dict],
+    text_lines: List[Dict],
+    max_horizontal_distance: int = 150,
+    max_vertical_distance: int = 50,
+    consider_right: bool = True,
+) -> List[Dict]:
+    """
+    Asocia cada checkbox con la línea de texto más cercana.
+    Prioriza: misma línea (horizontal) > arriba cercana > izquierda cercana.
+    Si consider_right=True, también busca texto a la derecha cuando no hay a la izquierda.
+
+    Args:
+        checkboxes: Lista de checkboxes (con bbox y tipo).
+        text_lines: Lista de líneas de texto (de group_words_into_lines).
+        max_horizontal_distance: Distancia horizontal máxima permitida.
+        max_vertical_distance: Distancia vertical máxima para considerar misma línea.
+        consider_right: Si debe buscar texto a la derecha del checkbox.
+
+    Returns:
+        Lista de checkboxes con campos:
+            - associated_text: texto asociado
+            - association_confidence: confianza (0-100)
+            - association_side: "left", "right", "above", "below", o None
+    """
+    for cb in checkboxes:
+        cb_x, cb_y, cb_w, cb_h = cb["bbox"]
+        cb_center_x = cb_x + cb_w // 2
+        cb_center_y = cb_y + cb_h // 2
+
+        best_match = None
+        best_score = float("inf")
+        best_side = None
+
+        for line in text_lines:
+            lx, ly, lw, lh = line["bbox"]
+            l_center_x = lx + lw // 2
+            l_center_y = ly + lh // 2
+
+            # Calcular distancias
+            horizontal_dist = abs(cb_center_x - l_center_x)
+            vertical_dist = abs(cb_center_y - l_center_y)
+
+            # Caso 1: Misma línea (verticalmente cerca)
+            if vertical_dist < max_vertical_distance:
+                # Texto a la izquierda
+                if lx + lw < cb_x:
+                    score = horizontal_dist  # distancia horizontal
+                    if score < best_score:
+                        best_score = score
+                        best_match = line["text"]
+                        best_side = "left"
+                # Texto a la derecha (si está permitido)
+                if consider_right and cb_x + cb_w < lx:
+                    score = horizontal_dist
+                    if score < best_score:
+                        best_score = score
+                        best_match = line["text"]
+                        best_side = "right"
+
+            # Caso 2: Texto arriba
+            elif ly + lh < cb_y and vertical_dist < max_vertical_distance * 2:
+                # Ponderar: vertical más importante que horizontal
+                score = vertical_dist + horizontal_dist * 0.5
+                if score < best_score:
+                    best_score = score
+                    best_match = line["text"]
+                    best_side = "above"
+
+            # Caso 3: Texto abajo (si no hay otra opción, a veces la pregunta puede estar después)
+            elif cb_y + cb_h < ly and vertical_dist < max_vertical_distance * 2:
+                score = vertical_dist + horizontal_dist * 0.5
+                if score < best_score:
+                    best_score = score
+                    best_match = line["text"]
+                    best_side = "below"
+
+        cb["associated_text"] = best_match if best_match else ""
+        # Convertir score a confianza (inversamente proporcional, máximo 100)
+        if best_match:
+            # Normalizar: score máximo esperado ~200, confianza = max(0, 100 - score/2)
+            cb["association_confidence"] = max(0, min(100, 100 - best_score / 2))
+        else:
+            cb["association_confidence"] = 0
+        cb["association_side"] = best_side
+
+    return checkboxes
+
+
+def group_checkboxes_by_proximity(
+    checkboxes: List[Dict], vertical_threshold: int = 30
+) -> List[List[Dict]]:
+    """
+    Agrupa checkboxes que están cerca verticalmente (probablemente opciones de una misma pregunta).
+    Útil para detectar radio buttons o grupos de opciones.
+
+    Args:
+        checkboxes: Lista de checkboxes.
+        vertical_threshold: Distancia vertical máxima para considerar mismo grupo.
+
+    Returns:
+        Lista de grupos, cada grupo es una lista de checkboxes.
+    """
+    if not checkboxes:
+        return []
+
+    # Ordenar por coordenada Y
+    sorted_cb = sorted(checkboxes, key=lambda cb: cb["bbox"][1])
+    groups = []
+    current_group = [sorted_cb[0]]
+
+    for cb in sorted_cb[1:]:
+        last_cb = current_group[-1]
+        last_y = last_cb["bbox"][1] + last_cb["bbox"][3]
+        current_y = cb["bbox"][1]
+        if current_y - last_y < vertical_threshold:
+            current_group.append(cb)
+        else:
+            groups.append(current_group)
+            current_group = [cb]
+    groups.append(current_group)
+    return groups
+
+
+def ensure_single_marked_per_group(
+    checkboxes: List[Dict], groups: List[List[Dict]]
+) -> List[Dict]:
+    """
+    Para grupos de checkboxes que actúan como radio buttons (solo uno debe estar marcado),
+    ajusta las marcas si hay múltiples marcados, quedándose con el de mayor confianza.
+    """
+    for group in groups:
+        marked = [cb for cb in group if cb.get("marked", False)]
+        if len(marked) > 1:
+            # Elegir el de mayor confianza
+            best = max(marked, key=lambda cb: cb.get("confidence", 0))
+            for cb in group:
+                if cb is not best:
+                    cb["marked"] = False
+                    cb["confidence"] = 100 - cb.get(
+                        "confidence", 0
+                    )  # opcional: ajustar
+    return checkboxes
