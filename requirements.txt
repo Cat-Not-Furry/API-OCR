@@ -12,3 +12,4 @@ requests==2.32.3
 pyspellchecker==0.8.2
 jinja2==3.1.4
 weasyprint==62.3
+pytesseract==0.3.10

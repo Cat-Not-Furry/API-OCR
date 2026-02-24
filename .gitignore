@@ -3,7 +3,7 @@ __pycache__/
 venv/
 .env
 *.log
-test/
+test/*
 .DS_Store
 *.html
 *.php
