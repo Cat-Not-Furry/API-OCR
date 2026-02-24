@@ -52,7 +52,7 @@ def run_tesseract(
     return result.stdout.strip()
 
 
-def ocr_region(image: np.ndarray, region: dict, lang: str) -> str:
+def ocr_region(image: np.ndarray, region: dict, lang: str, timeout: int = 180) -> str:
     """Ejecuta OCR en una región específica con PSM adecuado según el tipo."""
     x, y, w, h = region["bbox"]
     roi = image[y : y + h, x : x + w]
@@ -63,11 +63,11 @@ def ocr_region(image: np.ndarray, region: dict, lang: str) -> str:
 
     try:
         if region["type"] == "table":
-            text = run_tesseract(tmp_path, lang, psm=6)
+            text = run_tesseract(tmp_path, lang, psm=6, timeout=timeout)
         elif region["type"] == "text":
-            text = run_tesseract(tmp_path, lang, psm=4)
+            text = run_tesseract(tmp_path, lang, psm=4, timeout=timeout)
         else:
-            text = run_tesseract(tmp_path, lang, psm=7)
+            text = run_tesseract(tmp_path, lang, psm=7, timeout=timeout)
     finally:
         os.unlink(tmp_path)
     return text

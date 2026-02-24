@@ -1,4 +1,5 @@
 # ocr/association.py
+from preprocessing.checkbox import associate_checkboxes_with_text_advanced
 from typing import List, Dict, Any
 
 
@@ -6,6 +7,7 @@ def build_question_answer_pairs(
     checkboxes: List[Dict],
     text_lines: List[Dict],
     form_image_path: str = None,  # opcional, para debugging
+    lang: str = None,
 ) -> List[Dict[str, Any]]:
     """
     Construye pares pregunta-respuesta a partir de checkboxes y texto.

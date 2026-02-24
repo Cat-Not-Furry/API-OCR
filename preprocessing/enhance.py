@@ -3,7 +3,13 @@ import cv2
 import numpy as np
 import tempfile
 from ocr.engine import run_tesseract
-from spellchecker import SpellChecker
+
+try:
+    from spellchecker import SpellChecker
+except ImportError:
+    SpellChecker = None
+    logger.warning("Spellchecker no instalado, funciones de corrección no disponibles.")
+
 from skimage import filters
 import logging
 
