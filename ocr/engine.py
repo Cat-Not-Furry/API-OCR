@@ -149,6 +149,7 @@ def group_words_into_lines(text_regions: List[Dict]) -> List[Dict]:
                 "text": word["text"],
                 "bbox": list(word["bbox"]),  # (x, y, w, h) como lista mutable
                 "words": [word],
+                "conf": word["conf"],
             }
         else:
             # Concatenar texto con espacio
@@ -162,10 +163,12 @@ def group_words_into_lines(text_regions: List[Dict]) -> List[Dict]:
             new_h = max(y + h, y2 + h2) - new_y
             lines[line_num]["bbox"] = [new_x, new_y, new_w, new_h]
             lines[line_num]["words"].append(word)
+            lines[line_num]["conf"] += word["conf"]
 
     # Convertir a lista y asegurar que bbox sea tupla para consistencia
     result = []
     for line in lines.values():
         line["bbox"] = tuple(line["bbox"])
+        line["conf"] = line["conf"] / len(line["words"])
         result.append(line)
     return result

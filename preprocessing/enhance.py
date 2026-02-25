@@ -2,7 +2,10 @@
 import cv2
 import numpy as np
 import tempfile
+import logging
 from ocr.engine import run_tesseract
+
+logger = logging.getLogger(__name__)
 
 try:
     from spellchecker import SpellChecker
@@ -11,9 +14,6 @@ except ImportError:
     logger.warning("Spellchecker no instalado, funciones de corrección no disponibles.")
 
 from skimage import filters
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 def correct_skew(image: np.ndarray) -> np.ndarray:
@@ -213,6 +213,8 @@ def try_multiple_preprocessings(img: np.ndarray, lang: str) -> str:
 
 
 def correct_spelling(text: str, lang="es") -> str:
+    if SpellChecker is None:
+        return text
     spell = SpellChecker(language=lang)
     words = text.split()
     corrected = [spell.correction(w) if spell.correction(w) else w for w in words]
