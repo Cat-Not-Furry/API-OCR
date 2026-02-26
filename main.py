@@ -486,6 +486,45 @@ async def procesar_como_tabla(img: np.ndarray, lang: str):
     return {"tabla_texto": text, "bbox": bbox}
 
 
+async def obtener_texto_y_coordenadas(
+    img: np.ndarray,
+    lang: str,
+    psm_texto: int = 6,
+    psm_coords: int = 3,
+    timeout: int = 120,
+) -> tuple[str, List[Dict]]:
+    """
+    Ejecuta en paralelo la extracción de texto completo y la obtención de coordenadas.
+    Retorna (texto, lista_de_coordenadas).
+    """
+    loop = asyncio.get_event_loop()
+    # Guardar imagen temporal (una sola vez)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+        cv2.imwrite(tmp.name, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+        tmp_path = tmp.name
+
+    try:
+        # Lanzar ambas tareas en un executor (por defecto ThreadPoolExecutor)
+        texto_task = loop.run_in_executor(
+            None,
+            run_tesseract,
+            tmp_path,
+            lang,
+            psm_texto,
+            1,  # oem
+            timeout,
+            "",  # config
+        )
+        coords_task = loop.run_in_executor(
+            None, get_text_data, tmp_path, lang, psm_coords, timeout
+        )
+        texto, coords = await asyncio.gather(texto_task, coords_task)
+    finally:
+        os.unlink(tmp_path)
+
+    return texto, coords
+
+
 # ==================== ENDPOINTS ====================
 
 
@@ -730,12 +769,31 @@ async def ocr_tabla(
         raise
 
 
+# Función auxiliar (opcional, para evitar duplicación)
+async def obtener_texto_y_coordenadas(img: np.ndarray, lang: str) -> Dict:
+    """
+    Ejecuta OCR sobre la imagen y retorna tanto el texto completo como las coordenadas de palabras.
+    (No se usa directamente en el endpoint, pero puede servir para otros casos)
+    """
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+        cv2.imwrite(tmp.name, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+        tmp_path = tmp.name
+    try:
+        text = run_tesseract(tmp_path, lang, psm=6, timeout=120)
+        coords = get_text_data(tmp_path, lang, psm=3, timeout=120)
+        text = clean_text(text)
+        return {"text": text, "coords": coords}
+    finally:
+        os.unlink(tmp_path)
+
+
 @app.post("/ocr/documento_completo")
 async def ocr_documento_completo(
     file: UploadFile = File(...),
     lang: str = Form(DEFAULT_LANG),
     optimizar_para: str = Form("texto"),
     correct_spelling: bool = Form(False),
+    return_coords: bool = Form(False),  # <-- NUEVO FLAG
 ):
     start_time = time.time()
     original_size = 0
@@ -761,6 +819,7 @@ async def ocr_documento_completo(
                 if abs(y2 - y1) < 10:
                     num_horizontal += 1
 
+        # Elegir estrategia de procesamiento
         if num_horizontal > 10 or optimizar_para == "tablas":
             resultado = await procesar_como_tabla(img, lang)
             if "error" in resultado:
@@ -774,6 +833,7 @@ async def ocr_documento_completo(
                 img, lang, correccion_skew=True, metodo_binarizacion="sauvola"
             )
 
+        # Extraer texto del resultado
         if "text" in resultado:
             texto = resultado["text"]
         elif "texto_completo" in resultado:
@@ -789,8 +849,23 @@ async def ocr_documento_completo(
             else {}
         )
 
+        # Si se solicitan coordenadas, obtenerlas (sobre la imagen original)
+        coords_data = None
+        if return_coords:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                cv2.imwrite(tmp.name, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+                tmp_path = tmp.name
+            try:
+                # Ejecutar get_text_data en un hilo para no bloquear
+                coords_data = await asyncio.to_thread(
+                    get_text_data, tmp_path, lang, 3, 120
+                )
+            finally:
+                os.unlink(tmp_path)
+
         duration = time.time() - start_time
 
+        # Registrar métricas
         metrics.log_request(
             {
                 "filename": file.filename,
@@ -805,11 +880,13 @@ async def ocr_documento_completo(
                     "optimizacion": optimizar_para,
                     "lineas_detectadas": num_horizontal,
                     "correct_spelling": correct_spelling,
+                    "return_coords": return_coords,
                 },
             }
         )
 
-        return {
+        # Construir respuesta
+        response = {
             "success": True,
             "filename": file.filename,
             **resultado,
@@ -821,6 +898,11 @@ async def ocr_documento_completo(
                 "correct_spelling": correct_spelling,
             },
         }
+        if return_coords and coords_data:
+            response["coordenadas"] = coords_data
+
+        return response
+
     except Exception as e:
         duration = time.time() - start_time
         metrics.log_request(
@@ -850,6 +932,7 @@ async def ocr_con_checkboxes(
     lang: str = Form(DEFAULT_LANG),
     detectar_checkboxes: bool = Form(True),
     asociar_texto: bool = Form(True),
+    return_coords: bool = Form(False),  # <-- NUEVO FLAG
 ):
     start_time = time.time()
     original_size = 0
@@ -858,6 +941,7 @@ async def ocr_con_checkboxes(
         validate_file(file)
         img, original_size = await read_image(file, compress=True, max_size_mb=2.0)
 
+        # Calcular tamaño comprimido aproximado
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         compressed_size = len(buffer)
 
@@ -867,31 +951,50 @@ async def ocr_con_checkboxes(
         qa_pairs = []
         checkboxes_asociados = 0
         avg_conf = 0
+        coordenadas = []  # Para almacenar coordenadas de palabras
 
-        if asociar_texto and checkboxes:
+        # Si necesitamos texto para asociación o coordenadas, obtenemos datos
+        if asociar_texto or return_coords:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                 cv2.imwrite(tmp.name, cv2.cvtColor(processed, cv2.COLOR_RGB2BGR))
                 tmp_path = tmp.name
             try:
                 text_regions = get_text_data(tmp_path, lang, timeout=120)
                 text_lines = group_words_into_lines(text_regions)
-                qa_pairs = build_question_answer_pairs(
-                    checkboxes, text_lines, tmp_path, lang
-                )
-                checkboxes_asociados = len(qa_pairs)
-                if qa_pairs:
-                    avg_conf = sum(p.get("confianza", 0) for p in qa_pairs) / len(
-                        qa_pairs
+
+                if return_coords:
+                    # Convertir a formato JSON serializable
+                    coordenadas = [
+                        {
+                            "texto": w["text"],
+                            "bbox": list(w["bbox"]),
+                            "confianza": w["conf"],
+                            "linea": w["line"],
+                            "bloque": w["block"],
+                            "parrafo": w["par"],
+                        }
+                        for w in text_regions
+                    ]
+
+                if asociar_texto and checkboxes:
+                    qa_pairs = build_question_answer_pairs(
+                        checkboxes, text_lines, tmp_path, lang
                     )
+                    checkboxes_asociados = len(qa_pairs)
+                    if qa_pairs:
+                        avg_conf = sum(p.get("confianza", 0) for p in qa_pairs) / len(
+                            qa_pairs
+                        )
             except subprocess.TimeoutExpired:
                 raise HTTPException(
                     status_code=504,
-                    detail="Tiempo de espera agotado al obtener datos de texto para asociación.",
+                    detail="Tiempo de espera agotado al obtener datos de texto.",
                 )
             finally:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
 
+        # Extraer texto completo del documento
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
             cv2.imwrite(tmp.name, cv2.cvtColor(processed, cv2.COLOR_RGB2BGR))
             tmp_path = tmp.name
@@ -904,6 +1007,7 @@ async def ocr_con_checkboxes(
         structured = estructurar_texto_ocr(full_text)
         duration = time.time() - start_time
 
+        # Registrar métricas
         metrics.log_request(
             {
                 "filename": file.filename,
@@ -919,11 +1023,13 @@ async def ocr_con_checkboxes(
                     "language": lang,
                     "detectar_checkboxes": detectar_checkboxes,
                     "asociar_texto": asociar_texto,
+                    "return_coords": return_coords,
                 },
             }
         )
 
-        return {
+        # Construir respuesta
+        response = {
             "success": True,
             "filename": file.filename,
             "num_checkboxes": len(checkboxes),
@@ -931,8 +1037,16 @@ async def ocr_con_checkboxes(
             "full_text": full_text,
             "texto_estructurado": structured,
             "preguntas_respuestas": qa_pairs,
-            "metadata": {"language": lang, "detectar_checkboxes": detectar_checkboxes},
+            "metadata": {
+                "language": lang,
+                "detectar_checkboxes": detectar_checkboxes,
+            },
         }
+        if return_coords:
+            response["coordenadas"] = coordenadas
+
+        return response
+
     except Exception as e:
         duration = time.time() - start_time
         metrics.log_request(
@@ -948,6 +1062,7 @@ async def ocr_con_checkboxes(
                     "language": lang,
                     "detectar_checkboxes": detectar_checkboxes,
                     "asociar_texto": asociar_texto,
+                    "return_coords": return_coords,
                 },
             }
         )
