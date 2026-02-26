@@ -26,6 +26,9 @@ async def read_image(
     Si compress=True y la imagen supera 1 MB, la comprime automáticamente.
     """
     contents = await file.read()
+    if not contents:
+        raise HTTPException(400, "El archivo está vacío o no se pudo leer.")
+
     original_size_mb = len(contents) / (1024 * 1024)
     logger.info(f"Tamaño original: {original_size_mb:.2f} MB")
 
