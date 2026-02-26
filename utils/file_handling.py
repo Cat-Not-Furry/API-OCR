@@ -1,11 +1,11 @@
-# utils/file_handling.py (completo)
+# utils/file_handling.py
 import cv2
 import numpy as np
 from fastapi import UploadFile, HTTPException
 from pathlib import Path
 import logging
 from config import MAX_FILE_SIZE, SUPPORTED_EXTENSIONS
-from preprocessing.compression import compress_image  # <-- NUEVO
+from preprocessing.compression import compress_image
 
 logger = logging.getLogger(__name__)
 
@@ -20,16 +20,18 @@ def validate_file(file: UploadFile):
 
 async def read_image(
     file: UploadFile, compress: bool = True, max_size_mb: float = 1.5
-) -> np.ndarray:
+) -> tuple[np.ndarray, int]:
     """
     Lee un UploadFile y lo convierte en array numpy (RGB).
+    Retorna (imagen_rgb, tamaño_original_en_bytes).
     Si compress=True y la imagen supera 1 MB, la comprime automáticamente.
     """
     contents = await file.read()
     if not contents:
         raise HTTPException(400, "El archivo está vacío o no se pudo leer.")
 
-    original_size_mb = len(contents) / (1024 * 1024)
+    original_size = len(contents)
+    original_size_mb = original_size / (1024 * 1024)
     logger.info(f"Tamaño original: {original_size_mb:.2f} MB")
 
     # Decodificar
@@ -49,4 +51,4 @@ async def read_image(
         new_size_mb = len(buffer) / (1024 * 1024)
         logger.info(f"Tamaño después de compresión: {new_size_mb:.2f} MB")
 
-    return img_rgb
+    return img_rgb, original_size

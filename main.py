@@ -519,11 +519,9 @@ async def ocr_basico(
     compressed_size = 0
     try:
         validate_file(file)
-        contents = await file.read()
-        original_size = len(contents)
+        img, original_size = await read_image(file, compress=True, max_size_mb=2.0)
 
-        img = await read_image(file, compress=True, max_size_mb=2.0)
-
+        # Estimar tamaño comprimido
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         compressed_size = len(buffer)
 
@@ -590,10 +588,7 @@ async def ocr_con_segmentacion(
     compressed_size = 0
     try:
         validate_file(file)
-        contents = await file.read()
-        original_size = len(contents)
-
-        img = await read_image(file, compress=True, max_size_mb=2.0)
+        img, original_size = await read_image(file, compress=True, max_size_mb=2.0)
 
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         compressed_size = len(buffer)
@@ -670,10 +665,7 @@ async def ocr_tabla(
     compressed_size = 0
     try:
         validate_file(file)
-        contents = await file.read()
-        original_size = len(contents)
-
-        img = await read_image(file, compress=True, max_size_mb=2.0)
+        img, original_size = await read_image(file, compress=True, max_size_mb=2.0)
 
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         compressed_size = len(buffer)
@@ -750,10 +742,7 @@ async def ocr_documento_completo(
     compressed_size = 0
     try:
         validate_file(file)
-        contents = await file.read()
-        original_size = len(contents)
-
-        img = await read_image(file, compress=True, max_size_mb=2.0)
+        img, original_size = await read_image(file, compress=True, max_size_mb=2.0)
 
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         compressed_size = len(buffer)
@@ -867,10 +856,7 @@ async def ocr_con_checkboxes(
     compressed_size = 0
     try:
         validate_file(file)
-        contents = await file.read()
-        original_size = len(contents)
-
-        img = await read_image(file, compress=True, max_size_mb=2.0)
+        img, original_size = await read_image(file, compress=True, max_size_mb=2.0)
 
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         compressed_size = len(buffer)
@@ -997,7 +983,8 @@ async def ocr_async(
             optimizar_para,
             correct_spelling,
         )
-        return {"success": True, "result": result, "async": False}
+        # Devolver el resultado directamente (ya contiene 'success')
+        return {**result, "async": False}
     else:
         task_id = create_task()
         asyncio.create_task(
