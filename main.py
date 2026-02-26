@@ -4,7 +4,7 @@ import cv2
 import logging
 import subprocess
 import asyncio
-import time  # <-- AÑADIDO para métricas
+import time
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Importaciones de nuestros módulos
 from config import TESSERACT_PATH, TESSDATA_PATH, DEFAULT_LANG, INFINITYFREE_URL
 from utils.file_handling import validate_file, read_image
-from utils.logging_config import setup_logging  # <-- AHORA SÍ se puede importar
+from utils.logging_config import setup_logging
 from preprocessing.enhance import (
     correct_skew,
     remove_shadows,
@@ -32,16 +32,16 @@ from preprocessing.checkbox import detect_checkboxes
 from ocr.association import build_question_answer_pairs
 from integration.infinityfree import InfinityFreeClient
 from background import create_task, update_task, get_task
-from metrics import OCRMetrics  # <-- Importar la clase
+from metrics import OCRMetrics
 
-# Configurar logging (AHORA SÍ, después de importar setup_logging)
+# Configurar logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
 # Inicializar cliente InfinityFree
 infinity_client = InfinityFreeClient(INFINITYFREE_URL)
 
-# Inicializar métricas (con paréntesis para crear instancia)
+# Inicializar métricas
 metrics = OCRMetrics()
 
 app = FastAPI(
@@ -141,7 +141,6 @@ def sync_procesar_con_segmentacion(
         regions.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
 
         resultados = []
-        # Usar ThreadPoolExecutor con límite de workers
         with ThreadPoolExecutor(max_workers=5) as executor:
             future_to_idx = {
                 executor.submit(ocr_region, img, reg, lang, 120): i
@@ -180,9 +179,7 @@ def sync_procesar_con_segmentacion(
                         }
                     )
 
-        # Reordenar por índice (porque as_completed no garantiza orden)
         resultados.sort(key=lambda x: x["region"])
-
         texto_completo = "\n".join([r["texto"] for r in resultados if "texto" in r])
         return {
             "num_regiones": len(resultados),
@@ -230,9 +227,16 @@ def sync_ocr_pipeline(
 ) -> Dict:
     """
     Ejecuta el pipeline completo de OCR (versión síncrona) y devuelve el resultado.
+    Además registra métricas automáticamente.
     """
+    original_size = len(file_bytes)
+    start_time = time.time()
     try:
         img = read_image_from_bytes(file_bytes, compress=True, max_size_mb=2.0)
+
+        # Calcular tamaño comprimido aproximado
+        _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+        compressed_size = len(buffer)
 
         # Análisis rápido del documento
         gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
@@ -278,6 +282,30 @@ def sync_ocr_pipeline(
             else {}
         )
 
+        duration = time.time() - start_time
+
+        # Registrar métricas
+        metrics.log_request(
+            {
+                "filename": filename,
+                "endpoint": "/ocr/async",  # Se marca como async aunque sea el pipeline interno
+                "duration": duration,
+                "original_size": original_size,
+                "compressed_size": compressed_size,
+                "num_regiones": resultado.get("num_regiones", 0),
+                "num_checkboxes": 0,
+                "checkboxes_asociados": 0,
+                "avg_association_conf": 0,
+                "success": True,
+                "metadata": {
+                    "language": lang,
+                    "optimizacion": optimizar_para,
+                    "lineas_detectadas": num_horizontal,
+                    "correct_spelling": correct_spelling,
+                },
+            }
+        )
+
         return {
             "success": True,
             "filename": filename,
@@ -291,6 +319,23 @@ def sync_ocr_pipeline(
             },
         }
     except Exception as e:
+        duration = time.time() - start_time
+        metrics.log_request(
+            {
+                "filename": filename,
+                "endpoint": "/ocr/async",
+                "duration": duration,
+                "original_size": original_size,
+                "compressed_size": 0,
+                "success": False,
+                "error": str(e),
+                "metadata": {
+                    "language": lang,
+                    "optimizacion": optimizar_para,
+                    "correct_spelling": correct_spelling,
+                },
+            }
+        )
         return {"success": False, "error": str(e)}
 
 
@@ -309,7 +354,7 @@ async def run_ocr_background(
         update_task(task_id, "processing")
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
-            None,  # usa el executor por defecto (thread pool)
+            None,
             sync_ocr_pipeline,
             file_bytes,
             filename,
@@ -374,13 +419,11 @@ async def procesar_con_segmentacion(img: np.ndarray, lang: str, detectar_tablas:
 
     regions.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
 
-    # Límite de concurrencia para no saturar el sistema
     sem = asyncio.Semaphore(5)
 
     async def procesar_una(reg, idx):
         async with sem:
             try:
-                # Ejecutar ocr_region en un hilo separado (es síncrona)
                 texto = await asyncio.to_thread(ocr_region, img, reg, lang, 120)
                 return {
                     "region": idx,
@@ -406,8 +449,6 @@ async def procesar_con_segmentacion(img: np.ndarray, lang: str, detectar_tablas:
 
     tareas = [procesar_una(reg, i) for i, reg in enumerate(regions)]
     resultados = await asyncio.gather(*tareas)
-
-    # asyncio.gather mantiene el orden, pero ordenamos explícitamente por seguridad
     resultados.sort(key=lambda x: x["region"])
 
     texto_completo = "\n".join([r["texto"] for r in resultados if "texto" in r])
@@ -429,12 +470,6 @@ async def procesar_como_tabla(img: np.ndarray, lang: str):
     bbox = main_table["bbox"]
     roi = img[bbox[1] : bbox[1] + bbox[3], bbox[0] : bbox[0] + bbox[2]]
 
-    gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-    # Detección básica de líneas (versión simplificada) - se omite por brevedad
-    # ... (código de detección de líneas)
-
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
         cv2.imwrite(tmp.name, cv2.cvtColor(roi, cv2.COLOR_RGB2BGR))
         tmp_path = tmp.name
@@ -451,6 +486,28 @@ async def procesar_como_tabla(img: np.ndarray, lang: str):
     return {"tabla_texto": text, "bbox": bbox}
 
 
+# ==================== ENDPOINTS ====================
+
+
+@app.get("/")
+async def root():
+    """Health check con información de Tesseract."""
+    return {
+        "message": "API OCR AIDA Pro funcionando",
+        "status": "ok",
+        "tesseract": {
+            "path": TESSERACT_PATH,
+            "exists": os.path.exists(TESSERACT_PATH),
+            "executable": os.access(TESSERACT_PATH, os.X_OK),
+        },
+        "tessdata": {
+            "path": TESSDATA_PATH,
+            "exists": os.path.exists(TESSDATA_PATH),
+            "languages": [f.stem for f in Path(TESSDATA_PATH).glob("*.traineddata")],
+        },
+    }
+
+
 @app.post("/ocr/basico")
 async def ocr_basico(
     file: UploadFile = File(...),
@@ -460,7 +517,6 @@ async def ocr_basico(
     start_time = time.time()
     original_size = 0
     compressed_size = 0
-
     try:
         validate_file(file)
         contents = await file.read()
@@ -468,7 +524,6 @@ async def ocr_basico(
 
         img = await read_image(file, compress=True, max_size_mb=2.0)
 
-        # Estimar tamaño comprimido
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         compressed_size = len(buffer)
 
@@ -487,7 +542,6 @@ async def ocr_basico(
 
         duration = time.time() - start_time
 
-        # Registrar métricas
         metrics.log_request(
             {
                 "filename": file.filename,
@@ -507,7 +561,6 @@ async def ocr_basico(
             "texto_estructurado": estructurado,
             "metadata": {"language": lang, "correct_spelling": correct_spelling},
         }
-
     except Exception as e:
         duration = time.time() - start_time
         metrics.log_request(
@@ -535,7 +588,6 @@ async def ocr_con_segmentacion(
     start_time = time.time()
     original_size = 0
     compressed_size = 0
-
     try:
         validate_file(file)
         contents = await file.read()
@@ -555,13 +607,6 @@ async def ocr_con_segmentacion(
 
         duration = time.time() - start_time
 
-        # Calcular checkboxes asociados si existen
-        checkboxes_asociados = 0
-        avg_conf = 0
-        if "regiones" in resultado:
-            # Aquí podrías contar checkboxes si los hubiera
-            pass
-
         metrics.log_request(
             {
                 "filename": file.filename,
@@ -570,9 +615,6 @@ async def ocr_con_segmentacion(
                 "original_size": original_size,
                 "compressed_size": compressed_size,
                 "num_regiones": resultado.get("num_regiones", 0),
-                "num_checkboxes": 0,
-                "checkboxes_asociados": checkboxes_asociados,
-                "avg_association_conf": avg_conf,
                 "success": True,
                 "metadata": {
                     "language": lang,
@@ -595,7 +637,6 @@ async def ocr_con_segmentacion(
                 "correct_spelling": correct_spelling,
             },
         }
-
     except Exception as e:
         duration = time.time() - start_time
         metrics.log_request(
@@ -617,6 +658,203 @@ async def ocr_con_segmentacion(
         raise
 
 
+@app.post("/ocr/tabla")
+async def ocr_tabla(
+    file: UploadFile = File(...),
+    lang: str = Form(DEFAULT_LANG),
+    formato_salida: str = Form("json"),
+    correct_spelling: bool = Form(False),
+):
+    start_time = time.time()
+    original_size = 0
+    compressed_size = 0
+    try:
+        validate_file(file)
+        contents = await file.read()
+        original_size = len(contents)
+
+        img = await read_image(file, compress=True, max_size_mb=2.0)
+
+        _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+        compressed_size = len(buffer)
+
+        resultado = await procesar_como_tabla(img, lang)
+        if "error" in resultado:
+            return {"success": False, "error": resultado["error"]}
+
+        tabla_texto = resultado["tabla_texto"]
+        estructurado = estructurar_texto_ocr(
+            tabla_texto, corregir_ortografia_flag=correct_spelling
+        )
+
+        duration = time.time() - start_time
+
+        metrics.log_request(
+            {
+                "filename": file.filename,
+                "endpoint": "/ocr/tabla",
+                "duration": duration,
+                "original_size": original_size,
+                "compressed_size": compressed_size,
+                "success": True,
+                "metadata": {
+                    "language": lang,
+                    "formato_salida": formato_salida,
+                    "correct_spelling": correct_spelling,
+                },
+            }
+        )
+
+        return {
+            "success": True,
+            "filename": file.filename,
+            "tabla_texto": tabla_texto,
+            "texto_estructurado": estructurado,
+            "bbox": resultado["bbox"],
+            "metadata": {
+                "language": lang,
+                "formato_salida": formato_salida,
+                "correct_spelling": correct_spelling,
+            },
+        }
+    except Exception as e:
+        duration = time.time() - start_time
+        metrics.log_request(
+            {
+                "filename": file.filename,
+                "endpoint": "/ocr/tabla",
+                "duration": duration,
+                "original_size": original_size,
+                "compressed_size": compressed_size,
+                "success": False,
+                "error": str(e),
+                "metadata": {
+                    "language": lang,
+                    "formato_salida": formato_salida,
+                    "correct_spelling": correct_spelling,
+                },
+            }
+        )
+        raise
+
+
+@app.post("/ocr/documento_completo")
+async def ocr_documento_completo(
+    file: UploadFile = File(...),
+    lang: str = Form(DEFAULT_LANG),
+    optimizar_para: str = Form("texto"),
+    correct_spelling: bool = Form(False),
+):
+    start_time = time.time()
+    original_size = 0
+    compressed_size = 0
+    try:
+        validate_file(file)
+        contents = await file.read()
+        original_size = len(contents)
+
+        img = await read_image(file, compress=True, max_size_mb=2.0)
+
+        _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+        compressed_size = len(buffer)
+
+        # Análisis rápido del documento
+        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        edges = cv2.Canny(gray, 50, 150)
+        lines = cv2.HoughLinesP(
+            edges, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=10
+        )
+
+        num_horizontal = 0
+        if lines is not None:
+            for line in lines:
+                x1, y1, x2, y2 = line[0]
+                if abs(y2 - y1) < 10:
+                    num_horizontal += 1
+
+        if num_horizontal > 10 or optimizar_para == "tablas":
+            resultado = await procesar_como_tabla(img, lang)
+            if "error" in resultado:
+                resultado = await procesar_con_segmentacion(
+                    img, lang, detectar_tablas=True
+                )
+        elif optimizar_para == "mixto":
+            resultado = await procesar_con_segmentacion(img, lang, detectar_tablas=True)
+        else:
+            resultado = await procesar_con_preprocesamiento(
+                img, lang, correccion_skew=True, metodo_binarizacion="sauvola"
+            )
+
+        if "text" in resultado:
+            texto = resultado["text"]
+        elif "texto_completo" in resultado:
+            texto = resultado["texto_completo"]
+        elif "tabla_texto" in resultado:
+            texto = resultado["tabla_texto"]
+        else:
+            texto = ""
+
+        estructurado = (
+            estructurar_texto_ocr(texto, corregir_ortografia_flag=correct_spelling)
+            if texto
+            else {}
+        )
+
+        duration = time.time() - start_time
+
+        metrics.log_request(
+            {
+                "filename": file.filename,
+                "endpoint": "/ocr/documento_completo",
+                "duration": duration,
+                "original_size": original_size,
+                "compressed_size": compressed_size,
+                "num_regiones": resultado.get("num_regiones", 0),
+                "success": True,
+                "metadata": {
+                    "language": lang,
+                    "optimizacion": optimizar_para,
+                    "lineas_detectadas": num_horizontal,
+                    "correct_spelling": correct_spelling,
+                },
+            }
+        )
+
+        return {
+            "success": True,
+            "filename": file.filename,
+            **resultado,
+            "texto_estructurado": estructurado,
+            "metadata": {
+                "language": lang,
+                "optimizacion": optimizar_para,
+                "lineas_detectadas": num_horizontal,
+                "correct_spelling": correct_spelling,
+            },
+        }
+    except Exception as e:
+        duration = time.time() - start_time
+        metrics.log_request(
+            {
+                "filename": file.filename,
+                "endpoint": "/ocr/documento_completo",
+                "duration": duration,
+                "original_size": original_size,
+                "compressed_size": compressed_size,
+                "success": False,
+                "error": str(e),
+                "metadata": {
+                    "language": lang,
+                    "optimizacion": optimizar_para,
+                    "correct_spelling": correct_spelling,
+                },
+            }
+        )
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
 @app.post("/ocr/checkboxes")
 async def ocr_con_checkboxes(
     file: UploadFile = File(...),
@@ -627,7 +865,6 @@ async def ocr_con_checkboxes(
     start_time = time.time()
     original_size = 0
     compressed_size = 0
-
     try:
         validate_file(file)
         contents = await file.read()
@@ -655,14 +892,11 @@ async def ocr_con_checkboxes(
                 qa_pairs = build_question_answer_pairs(
                     checkboxes, text_lines, tmp_path, lang
                 )
-
-                # Contar checkboxes con texto asociado
                 checkboxes_asociados = len(qa_pairs)
                 if qa_pairs:
                     avg_conf = sum(p.get("confianza", 0) for p in qa_pairs) / len(
                         qa_pairs
                     )
-
             except subprocess.TimeoutExpired:
                 raise HTTPException(
                     status_code=504,
@@ -672,7 +906,6 @@ async def ocr_con_checkboxes(
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
 
-        # Extraer texto completo
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
             cv2.imwrite(tmp.name, cv2.cvtColor(processed, cv2.COLOR_RGB2BGR))
             tmp_path = tmp.name
@@ -714,7 +947,6 @@ async def ocr_con_checkboxes(
             "preguntas_respuestas": qa_pairs,
             "metadata": {"language": lang, "detectar_checkboxes": detectar_checkboxes},
         }
-
     except Exception as e:
         duration = time.time() - start_time
         metrics.log_request(
@@ -736,8 +968,56 @@ async def ocr_con_checkboxes(
         raise
 
 
-# Los demás endpoints (/ocr/tabla, /ocr/documento_completo, /ocr/async, /ocr/result)
-# deben actualizarse de manera similar, añadiendo métricas al inicio y al final.
+@app.post("/ocr/async")
+async def ocr_async(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    lang: str = Form(DEFAULT_LANG),
+    optimizar_para: str = Form("texto"),
+    correct_spelling: bool = Form(False),
+):
+    """
+    Endpoint asíncrono para imágenes grandes.
+    Si el archivo supera 5 MB, se crea una tarea y se procesa en segundo plano.
+    Para archivos más pequeños, se procesa de forma síncrona (misma respuesta inmediata).
+    """
+    validate_file(file)
+    contents = await file.read()
+    size_mb = len(contents) / (1024 * 1024)
+
+    if size_mb <= 5:
+        # Procesar directamente (síncrono, pero dentro de un hilo para no bloquear)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            sync_ocr_pipeline,
+            contents,
+            file.filename,
+            lang,
+            optimizar_para,
+            correct_spelling,
+        )
+        return {"success": True, "result": result, "async": False}
+    else:
+        task_id = create_task()
+        asyncio.create_task(
+            run_ocr_background(
+                task_id, contents, file.filename, lang, optimizar_para, correct_spelling
+            )
+        )
+        return {"task_id": task_id, "status": "pending", "async": True}
+
+
+@app.get("/ocr/result/{task_id}")
+async def get_ocr_result(task_id: str):
+    """
+    Consulta el estado y resultado de una tarea asíncrona.
+    """
+    task = get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    return task
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
