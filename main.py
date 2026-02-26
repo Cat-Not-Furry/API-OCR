@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import numpy as np
 import tempfile
+from typing import List, Dict, Tuple
 from pathlib import Path
 from typing import Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -421,7 +422,7 @@ async def procesar_con_segmentacion(img: np.ndarray, lang: str, detectar_tablas:
 
     sem = asyncio.Semaphore(5)
 
-    async def procesar_una(reg, idx):
+async def procesar_una(reg, idx):
         async with sem:
             try:
                 texto = await asyncio.to_thread(ocr_region, img, reg, lang, 120)
@@ -485,44 +486,6 @@ async def procesar_como_tabla(img: np.ndarray, lang: str):
 
     return {"tabla_texto": text, "bbox": bbox}
 
-
-async def obtener_texto_y_coordenadas(
-    img: np.ndarray,
-    lang: str,
-    psm_texto: int = 6,
-    psm_coords: int = 3,
-    timeout: int = 120,
-) -> tuple[str, List[Dict]]:
-    """
-    Ejecuta en paralelo la extracción de texto completo y la obtención de coordenadas.
-    Retorna (texto, lista_de_coordenadas).
-    """
-    loop = asyncio.get_event_loop()
-    # Guardar imagen temporal (una sola vez)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-        cv2.imwrite(tmp.name, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-        tmp_path = tmp.name
-
-    try:
-        # Lanzar ambas tareas en un executor (por defecto ThreadPoolExecutor)
-        texto_task = loop.run_in_executor(
-            None,
-            run_tesseract,
-            tmp_path,
-            lang,
-            psm_texto,
-            1,  # oem
-            timeout,
-            "",  # config
-        )
-        coords_task = loop.run_in_executor(
-            None, get_text_data, tmp_path, lang, psm_coords, timeout
-        )
-        texto, coords = await asyncio.gather(texto_task, coords_task)
-    finally:
-        os.unlink(tmp_path)
-
-    return texto, coords
 
 
 # ==================== ENDPOINTS ====================
