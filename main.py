@@ -420,7 +420,7 @@ async def procesar_con_segmentacion(img: np.ndarray, lang: str, detectar_tablas:
 
     regions.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
 
-    sem = asyncio.Semaphore(5)
+sem = asyncio.Semaphore(5)
 
 async def procesar_una(reg, idx):
         async with sem:
