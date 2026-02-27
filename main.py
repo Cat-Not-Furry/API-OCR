@@ -420,9 +420,9 @@ async def procesar_con_segmentacion(img: np.ndarray, lang: str, detectar_tablas:
 
     regions.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
 
-sem = asyncio.Semaphore(5)
+    sem = asyncio.Semaphore(5)
 
-async def procesar_una(reg, idx):
+    async def procesar_una(reg, idx):
         async with sem:
             try:
                 texto = await asyncio.to_thread(ocr_region, img, reg, lang, 120)
@@ -485,7 +485,6 @@ async def procesar_como_tabla(img: np.ndarray, lang: str):
         os.unlink(tmp_path)
 
     return {"tabla_texto": text, "bbox": bbox}
-
 
 
 # ==================== ENDPOINTS ====================
