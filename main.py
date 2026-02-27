@@ -225,6 +225,7 @@ def sync_ocr_pipeline(
     lang: str,
     optimizar_para: str,
     correct_spelling: bool,
+    return_coords: bool = False,  # <-- NUEVO
 ) -> Dict:
     """
     Ejecuta el pipeline completo de OCR (versión síncrona) y devuelve el resultado.
@@ -283,6 +284,15 @@ def sync_ocr_pipeline(
             else {}
         )
 
+        # Si se solicitan coordenadas, en el futuro se podrá llamar a una versión unificada
+        # Por ahora no se implementa, pero el parámetro está disponible.
+        coords_data = None
+        if return_coords:
+            # Aquí se podría llamar a una función que obtenga texto y coordenadas en una pasada
+            # Por ejemplo: resultado_unificado = sync_procesar_con_preprocesamiento_con_coords(...)
+            # Por ahora, solo se deja preparado.
+            pass
+
         duration = time.time() - start_time
 
         # Registrar métricas
@@ -303,6 +313,7 @@ def sync_ocr_pipeline(
                     "optimizacion": optimizar_para,
                     "lineas_detectadas": num_horizontal,
                     "correct_spelling": correct_spelling,
+                    "return_coords": return_coords,
                 },
             }
         )
@@ -347,6 +358,7 @@ async def run_ocr_background(
     lang: str,
     optimizar_para: str,
     correct_spelling: bool,
+    return_coords: bool,  # <-- NUEVO
 ):
     """
     Ejecuta el OCR en un hilo separado y actualiza el estado de la tarea.
@@ -362,11 +374,61 @@ async def run_ocr_background(
             lang,
             optimizar_para,
             correct_spelling,
+            return_coords,  # <-- Pasar el nuevo argumento
         )
         update_task(task_id, "done", result)
     except Exception as e:
         logger.exception(f"Error en tarea {task_id}")
         update_task(task_id, "error", {"error": str(e)})
+
+
+@app.post("/ocr/async")
+async def ocr_async(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    lang: str = Form(DEFAULT_LANG),
+    optimizar_para: str = Form("texto"),
+    correct_spelling: bool = Form(False),
+    return_coords: bool = Form(False),  # <-- NUEVO
+):
+    """
+    Endpoint asíncrono para imágenes grandes.
+    Si el archivo supera 5 MB, se crea una tarea y se procesa en segundo plano.
+    Para archivos más pequeños, se procesa de forma síncrona (misma respuesta inmediata).
+    """
+    validate_file(file)
+    contents = await file.read()
+    size_mb = len(contents) / (1024 * 1024)
+
+    if size_mb <= 5:
+        # Procesar directamente (síncrono, pero dentro de un hilo para no bloquear)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            sync_ocr_pipeline,
+            contents,
+            file.filename,
+            lang,
+            optimizar_para,
+            correct_spelling,
+            return_coords,  # <-- Pasar el nuevo argumento
+        )
+        # Devolver el resultado directamente (ya contiene 'success')
+        return {**result, "async": False}
+    else:
+        task_id = create_task()
+        asyncio.create_task(
+            run_ocr_background(
+                task_id,
+                contents,
+                file.filename,
+                lang,
+                optimizar_para,
+                correct_spelling,
+                return_coords,  # <-- Pasar el nuevo argumento
+            )
+        )
+        return {"task_id": task_id, "status": "pending", "async": True}
 
 
 # ==================== FUNCIONES AUXILIARES (originales, asíncronas) ====================
@@ -396,6 +458,43 @@ async def procesar_con_preprocesamiento(
     finally:
         os.unlink(tmp_path)
     return {"text": text}
+
+
+async def procesar_con_preprocesamiento_con_coords(
+    img: np.ndarray,
+    lang: str,
+    correccion_skew: bool,
+    metodo_binarizacion: str,
+) -> Dict:
+    """
+    Versión de procesar_con_preprocesamiento que obtiene texto y coordenadas en una sola pasada.
+    Retorna un dict con 'text', 'coords' y 'lines'.
+    """
+    if correccion_skew:
+        img = correct_skew(img)
+    img = remove_shadows(img)
+    img = remove_noise(img, method="nlmeans")
+    img = binarize(img, method=metodo_binarizacion)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+        cv2.imwrite(tmp.name, img)
+        tmp_path = tmp.name
+
+    try:
+        # Una sola llamada a get_text_data (PSM 3 es bueno para palabras sueltas)
+        text_regions = get_text_data(tmp_path, lang, psm=3, timeout=120)
+        # Agrupar en líneas para reconstruir el texto
+        text_lines = group_words_into_lines(text_regions)
+        # Reconstruir el texto completo respetando saltos de línea
+        texto_completo = "\n".join([line["text"] for line in text_lines])
+        texto_limpio = clean_text(texto_completo)
+        return {
+            "text": texto_limpio,
+            "coords": text_regions,
+            "lines": text_lines,
+        }
+    finally:
+        os.unlink(tmp_path)
 
 
 async def procesar_con_segmentacion(img: np.ndarray, lang: str, detectar_tablas: bool):
@@ -755,7 +854,8 @@ async def ocr_documento_completo(
     lang: str = Form(DEFAULT_LANG),
     optimizar_para: str = Form("texto"),
     correct_spelling: bool = Form(False),
-    return_coords: bool = Form(False),  # <-- NUEVO FLAG
+    return_coords: bool = Form(False),
+    use_unified_ocr: bool = Form(False),  # <-- NUEVO
 ):
     start_time = time.time()
     original_size = 0
@@ -781,49 +881,61 @@ async def ocr_documento_completo(
                 if abs(y2 - y1) < 10:
                     num_horizontal += 1
 
-        # Elegir estrategia de procesamiento
-        if num_horizontal > 10 or optimizar_para == "tablas":
-            resultado = await procesar_como_tabla(img, lang)
-            if "error" in resultado:
+        # Elegir estrategia de procesamiento según flags
+        if return_coords and use_unified_ocr:
+            # Versión unificada: una sola pasada para texto y coordenadas
+            resultado_unificado = await procesar_con_preprocesamiento_con_coords(
+                img, lang, correccion_skew=True, metodo_binarizacion="sauvola"
+            )
+            texto = resultado_unificado["text"]
+            coords_data = resultado_unificado["coords"]
+            # Para mantener la estructura de respuesta, creamos un resultado similar al de los otros pipelines
+            resultado = {"text": texto}
+        else:
+            # Comportamiento original (con posible segunda pasada para coordenadas)
+            if num_horizontal > 10 or optimizar_para == "tablas":
+                resultado = await procesar_como_tabla(img, lang)
+                if "error" in resultado:
+                    resultado = await procesar_con_segmentacion(
+                        img, lang, detectar_tablas=True
+                    )
+            elif optimizar_para == "mixto":
                 resultado = await procesar_con_segmentacion(
                     img, lang, detectar_tablas=True
                 )
-        elif optimizar_para == "mixto":
-            resultado = await procesar_con_segmentacion(img, lang, detectar_tablas=True)
-        else:
-            resultado = await procesar_con_preprocesamiento(
-                img, lang, correccion_skew=True, metodo_binarizacion="sauvola"
-            )
+            else:
+                resultado = await procesar_con_preprocesamiento(
+                    img, lang, correccion_skew=True, metodo_binarizacion="sauvola"
+                )
 
-        # Extraer texto del resultado
-        if "text" in resultado:
-            texto = resultado["text"]
-        elif "texto_completo" in resultado:
-            texto = resultado["texto_completo"]
-        elif "tabla_texto" in resultado:
-            texto = resultado["tabla_texto"]
-        else:
-            texto = ""
+            # Extraer texto del resultado
+            if "text" in resultado:
+                texto = resultado["text"]
+            elif "texto_completo" in resultado:
+                texto = resultado["texto_completo"]
+            elif "tabla_texto" in resultado:
+                texto = resultado["tabla_texto"]
+            else:
+                texto = ""
+
+            # Si se solicitan coordenadas y no se obtuvieron en la versión unificada, obtenerlas ahora
+            coords_data = None
+            if return_coords and not use_unified_ocr:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                    cv2.imwrite(tmp.name, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+                    tmp_path = tmp.name
+                try:
+                    coords_data = await asyncio.to_thread(
+                        get_text_data, tmp_path, lang, 3, 120
+                    )
+                finally:
+                    os.unlink(tmp_path)
 
         estructurado = (
             estructurar_texto_ocr(texto, corregir_ortografia_flag=correct_spelling)
             if texto
             else {}
         )
-
-        # Si se solicitan coordenadas, obtenerlas (sobre la imagen original)
-        coords_data = None
-        if return_coords:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                cv2.imwrite(tmp.name, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-                tmp_path = tmp.name
-            try:
-                # Ejecutar get_text_data en un hilo para no bloquear
-                coords_data = await asyncio.to_thread(
-                    get_text_data, tmp_path, lang, 3, 120
-                )
-            finally:
-                os.unlink(tmp_path)
 
         duration = time.time() - start_time
 
@@ -843,6 +955,7 @@ async def ocr_documento_completo(
                     "lineas_detectadas": num_horizontal,
                     "correct_spelling": correct_spelling,
                     "return_coords": return_coords,
+                    "use_unified_ocr": use_unified_ocr,
                 },
             }
         )
@@ -1038,6 +1151,7 @@ async def ocr_async(
     lang: str = Form(DEFAULT_LANG),
     optimizar_para: str = Form("texto"),
     correct_spelling: bool = Form(False),
+    return_coords: bool = Form(False),
 ):
     """
     Endpoint asíncrono para imágenes grandes.
@@ -1059,6 +1173,7 @@ async def ocr_async(
             lang,
             optimizar_para,
             correct_spelling,
+            return_coords,
         )
         # Devolver el resultado directamente (ya contiene 'success')
         return {**result, "async": False}
@@ -1066,7 +1181,13 @@ async def ocr_async(
         task_id = create_task()
         asyncio.create_task(
             run_ocr_background(
-                task_id, contents, file.filename, lang, optimizar_para, correct_spelling
+                task_id,
+                contents,
+                file.filename,
+                lang,
+                optimizar_para,
+                correct_spelling,
+                return_coords,
             )
         )
         return {"task_id": task_id, "status": "pending", "async": True}
