@@ -40,6 +40,14 @@ async def read_image(
     if img is None:
         raise HTTPException(400, "No se pudo decodificar la imagen")
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    h, w = img_rgb.shape[:2]
+    max_dim = 2000  # Ajusta según necesidad
+    if w > max_dim or h > max_dim:
+        scale = max_dim / max(w, h)
+        new_w = int(w * scale)
+        new_h = int(h * scale)
+        img_rgb = cv2.resize(img_rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        logger.info(f"Redimensionado a {new_w}x{new_h} píxeles")
 
     # Comprimir si se solicita y el archivo es grande
     if compress and original_size_mb > 1.0:

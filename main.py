@@ -12,7 +12,6 @@ import numpy as np
 import tempfile
 from typing import List, Dict, Tuple
 from pathlib import Path
-from typing import Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Importaciones de nuestros módulos
@@ -225,7 +224,7 @@ def sync_ocr_pipeline(
     lang: str,
     optimizar_para: str,
     correct_spelling: bool,
-    return_coords: bool = False,  # <-- NUEVO
+    return_coords: bool = False,
 ) -> Dict:
     """
     Ejecuta el pipeline completo de OCR (versión síncrona) y devuelve el resultado.
@@ -307,7 +306,7 @@ def sync_ocr_pipeline(
                 "num_checkboxes": 0,
                 "checkboxes_asociados": 0,
                 "avg_association_conf": 0,
-                "success": True,
+                "success": True,  # Corregido
                 "metadata": {
                     "language": lang,
                     "optimizacion": optimizar_para,
@@ -339,7 +338,6 @@ def sync_ocr_pipeline(
                 "duration": duration,
                 "original_size": original_size,
                 "compressed_size": 0,
-                "success": False,
                 "error": str(e),
                 "metadata": {
                     "language": lang,
@@ -358,7 +356,7 @@ async def run_ocr_background(
     lang: str,
     optimizar_para: str,
     correct_spelling: bool,
-    return_coords: bool,  # <-- NUEVO
+    return_coords: bool,
 ):
     """
     Ejecuta el OCR en un hilo separado y actualiza el estado de la tarea.
@@ -374,61 +372,12 @@ async def run_ocr_background(
             lang,
             optimizar_para,
             correct_spelling,
-            return_coords,  # <-- Pasar el nuevo argumento
+            return_coords,
         )
         update_task(task_id, "done", result)
     except Exception as e:
         logger.exception(f"Error en tarea {task_id}")
         update_task(task_id, "error", {"error": str(e)})
-
-
-@app.post("/ocr/async")
-async def ocr_async(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    lang: str = Form(DEFAULT_LANG),
-    optimizar_para: str = Form("texto"),
-    correct_spelling: bool = Form(False),
-    return_coords: bool = Form(False),  # <-- NUEVO
-):
-    """
-    Endpoint asíncrono para imágenes grandes.
-    Si el archivo supera 5 MB, se crea una tarea y se procesa en segundo plano.
-    Para archivos más pequeños, se procesa de forma síncrona (misma respuesta inmediata).
-    """
-    validate_file(file)
-    contents = await file.read()
-    size_mb = len(contents) / (1024 * 1024)
-
-    if size_mb <= 5:
-        # Procesar directamente (síncrono, pero dentro de un hilo para no bloquear)
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            sync_ocr_pipeline,
-            contents,
-            file.filename,
-            lang,
-            optimizar_para,
-            correct_spelling,
-            return_coords,  # <-- Pasar el nuevo argumento
-        )
-        # Devolver el resultado directamente (ya contiene 'success')
-        return {**result, "async": False}
-    else:
-        task_id = create_task()
-        asyncio.create_task(
-            run_ocr_background(
-                task_id,
-                contents,
-                file.filename,
-                lang,
-                optimizar_para,
-                correct_spelling,
-                return_coords,  # <-- Pasar el nuevo argumento
-            )
-        )
-        return {"task_id": task_id, "status": "pending", "async": True}
 
 
 # ==================== FUNCIONES AUXILIARES (originales, asíncronas) ====================
@@ -481,8 +430,14 @@ async def procesar_con_preprocesamiento_con_coords(
         tmp_path = tmp.name
 
     try:
-        # Una sola llamada a get_text_data (PSM 3 es bueno para palabras sueltas)
-        text_regions = get_text_data(tmp_path, lang, psm=3, timeout=120)
+        try:
+            # Una sola llamada a get_text_data (PSM 3 es bueno para palabras sueltas)
+            text_regions = get_text_data(tmp_path, lang, psm=3, timeout=120)
+        except subprocess.TimeoutExpired:
+            raise HTTPException(
+                status_code=504,
+                detail="Tiempo de espera agotado al obtener datos de texto con coordenadas."
+            )
         # Agrupar en líneas para reconstruir el texto
         text_lines = group_words_into_lines(text_regions)
         # Reconstruir el texto completo respetando saltos de línea
@@ -621,7 +576,10 @@ async def ocr_basico(
         validate_file(file)
         img, original_size = await read_image(file, compress=True, max_size_mb=2.0)
 
-        # Estimar tamaño comprimido
+        # Log de dimensiones
+        h, w = img.shape[:2]
+        logger.info(f"Imagen para OCR básico: {w}x{h} píxeles")
+
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         compressed_size = len(buffer)
 
@@ -631,12 +589,18 @@ async def ocr_basico(
 
         try:
             text = run_tesseract(tmp_path, lang, psm=6, timeout=120)
-            text = clean_text(text)
-            estructurado = estructurar_texto_ocr(
-                text, corregir_ortografia_flag=correct_spelling
+        except subprocess.TimeoutExpired:
+            raise HTTPException(
+                status_code=504,
+                detail="Tiempo de espera agotado. La imagen es demasiado compleja o tiene dimensiones excesivas.",
             )
         finally:
             os.unlink(tmp_path)
+
+        text = clean_text(text)
+        estructurado = estructurar_texto_ocr(
+            text, corregir_ortografia_flag=correct_spelling
+        )
 
         duration = time.time() - start_time
 
@@ -660,6 +624,8 @@ async def ocr_basico(
             "metadata": {"language": lang, "correct_spelling": correct_spelling},
         }
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         duration = time.time() - start_time
         metrics.log_request(
             {
@@ -673,7 +639,7 @@ async def ocr_basico(
                 "metadata": {"language": lang, "correct_spelling": correct_spelling},
             }
         )
-        raise
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
 @app.post("/ocr/segmentado")
@@ -830,24 +796,6 @@ async def ocr_tabla(
         raise
 
 
-# Función auxiliar (opcional, para evitar duplicación)
-async def obtener_texto_y_coordenadas(img: np.ndarray, lang: str) -> Dict:
-    """
-    Ejecuta OCR sobre la imagen y retorna tanto el texto completo como las coordenadas de palabras.
-    (No se usa directamente en el endpoint, pero puede servir para otros casos)
-    """
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-        cv2.imwrite(tmp.name, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-        tmp_path = tmp.name
-    try:
-        text = run_tesseract(tmp_path, lang, psm=6, timeout=120)
-        coords = get_text_data(tmp_path, lang, psm=3, timeout=120)
-        text = clean_text(text)
-        return {"text": text, "coords": coords}
-    finally:
-        os.unlink(tmp_path)
-
-
 @app.post("/ocr/documento_completo")
 async def ocr_documento_completo(
     file: UploadFile = File(...),
@@ -855,7 +803,7 @@ async def ocr_documento_completo(
     optimizar_para: str = Form("texto"),
     correct_spelling: bool = Form(False),
     return_coords: bool = Form(False),
-    use_unified_ocr: bool = Form(False),  # <-- NUEVO
+    use_unified_ocr: bool = Form(False),
 ):
     start_time = time.time()
     original_size = 0
@@ -1007,7 +955,7 @@ async def ocr_con_checkboxes(
     lang: str = Form(DEFAULT_LANG),
     detectar_checkboxes: bool = Form(True),
     asociar_texto: bool = Form(True),
-    return_coords: bool = Form(False),  # <-- NUEVO FLAG
+    return_coords: bool = Form(False),
 ):
     start_time = time.time()
     original_size = 0
@@ -1093,7 +1041,7 @@ async def ocr_con_checkboxes(
                 "num_checkboxes": len(checkboxes),
                 "checkboxes_asociados": checkboxes_asociados,
                 "avg_association_conf": avg_conf,
-                "success": True,
+                "success": True,  # Corregido
                 "metadata": {
                     "language": lang,
                     "detectar_checkboxes": detectar_checkboxes,
