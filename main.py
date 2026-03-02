@@ -5,7 +5,15 @@ import logging
 import subprocess
 import asyncio
 import time
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
+from fastapi import (
+    FastAPI,
+    File,
+    UploadFile,
+    Form,
+    HTTPException,
+    BackgroundTasks,
+    FileResponse,
+)
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import numpy as np
@@ -436,7 +444,7 @@ async def procesar_con_preprocesamiento_con_coords(
         except subprocess.TimeoutExpired:
             raise HTTPException(
                 status_code=504,
-                detail="Tiempo de espera agotado al obtener datos de texto con coordenadas."
+                detail="Tiempo de espera agotado al obtener datos de texto con coordenadas.",
             )
         # Agrupar en líneas para reconstruir el texto
         text_lines = group_words_into_lines(text_regions)
@@ -539,6 +547,74 @@ async def procesar_como_tabla(img: np.ndarray, lang: str):
         os.unlink(tmp_path)
 
     return {"tabla_texto": text, "bbox": bbox}
+
+
+# ==================== FUNCIÓN PARA GENERAR PDF ====================
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4, letter
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+import tempfile
+import os
+
+
+async def generar_pdf_desde_coordenadas(
+    text_regions: List[Dict],
+    img_width: int,
+    img_height: int,
+    page_size: str = "A4",
+    font_path: str = "fonts/DejaVuSans.ttf",
+) -> str:
+    """
+    Genera un PDF a partir de las coordenadas de palabras.
+    Retorna la ruta del archivo temporal.
+    """
+    # Seleccionar tamaño de página
+    if page_size.upper() == "LETTER":
+        page_width, page_height = letter
+    else:
+        page_width, page_height = A4
+
+    # Calcular escala para que la imagen quepa en la página (manteniendo proporción)
+    scale = min(page_width / img_width, page_height / img_height)
+
+    # Ancho y alto efectivos del contenido en el PDF (centrado)
+    content_width = img_width * scale
+    content_height = img_height * scale
+    offset_x = (page_width - content_width) / 2
+    offset_y = (page_height - content_height) / 2
+
+    # Crear archivo temporal
+    fd, temp_path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+
+    # Crear canvas
+    c = canvas.Canvas(temp_path, pagesize=(page_width, page_height))
+
+    # Registrar fuente
+    pdfmetrics.registerFont(TTFont("CustomFont", font_path))
+
+    # Dibujar cada palabra
+    for word in text_regions:
+        texto = word["text"]
+        if not texto:
+            continue
+        x, y, w, h = word["bbox"]  # x,y = esquina superior izquierda
+
+        # Escalar coordenadas
+        pdf_x = x * scale + offset_x
+        # Invertir Y: en imágenes, Y=0 es arriba; en PDF, Y=0 es abajo.
+        # Usamos la parte inferior de la palabra como referencia (y + h)
+        pdf_y = (img_height - (y + h)) * scale + offset_y
+
+        # Tamaño de fuente basado en la altura de la palabra, limitado
+        font_size = max(6, min(24, h * scale * 0.8))  # 0.8 es factor empírico
+        c.setFont("CustomFont", font_size)
+        c.drawString(pdf_x, pdf_y, texto)
+
+    c.save()
+    return temp_path
 
 
 # ==================== ENDPOINTS ====================
@@ -1139,6 +1215,115 @@ async def ocr_async(
             )
         )
         return {"task_id": task_id, "status": "pending", "async": True}
+
+
+@app.post("/ocr/pdf")
+async def ocr_to_pdf(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    lang: str = Form(DEFAULT_LANG),
+    optimizar_para: str = Form("texto"),
+    correct_spelling: bool = Form(False),
+    page_size: str = Form("A4"),  # opcional: A4 o letter
+    include_full_text: bool = Form(
+        False
+    ),  # si True, también devuelve JSON con texto estructurado (por implementar)
+):
+    start_time = time.time()
+    original_size = 0
+    temp_pdf_path = None  # para poder borrarlo después
+    try:
+        validate_file(file)
+        # 1. Leer imagen y obtener dimensiones
+        img, original_size = await read_image(file, compress=True, max_size_mb=2.0)
+        img_height, img_width = img.shape[:2]
+
+        # 2. Preprocesar ligeramente (opcional, mejora OCR)
+        # Usamos la misma imagen preprocesada que en otros endpoints
+        processed = deskew_and_clean(img.copy())
+
+        # 3. Obtener coordenadas de palabras
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            cv2.imwrite(tmp.name, cv2.cvtColor(processed, cv2.COLOR_RGB2BGR))
+            tmp_path = tmp.name
+        try:
+            text_regions = await asyncio.to_thread(
+                get_text_data, tmp_path, lang, 3, 120
+            )
+        finally:
+            os.unlink(tmp_path)
+
+        if not text_regions:
+            raise HTTPException(400, "No se detectó texto en la imagen")
+
+        # 4. Generar PDF
+        temp_pdf_path = await generar_pdf_desde_coordenadas(
+            text_regions=text_regions,
+            img_width=img_width,
+            img_height=img_height,
+            page_size=page_size,
+        )
+
+        # 5. (Opcional) Obtener texto estructurado si se solicita
+        # Aquí podrías llamar a procesar_con_preprocesamiento_con_coords si quisieras evitar doble OCR
+        # pero por ahora lo dejamos como placeholder
+        if include_full_text:
+            # Ejemplo: podrías ejecutar un OCR normal para obtener el texto completo
+            # y devolverlo en los headers o en un JSON aparte (pero el endpoint devuelve PDF)
+            # Esto es más complejo; podríamos implementarlo en una versión futura.
+            pass
+
+        # Registrar métricas
+        duration = time.time() - start_time
+        metrics.log_request(
+            {
+                "filename": file.filename,
+                "endpoint": "/ocr/pdf",
+                "duration": duration,
+                "original_size": original_size,
+                "compressed_size": 0,  # no aplica
+                "success": True,
+                "metadata": {
+                    "language": lang,
+                    "page_size": page_size,
+                    "num_palabras": len(text_regions),
+                },
+            }
+        )
+
+        background_tasks.add_task(os.unlink, temp_pdf_path)
+        # Devolver el PDF como archivo adjunto
+        return FileResponse(
+            path=temp_pdf_path,
+            media_type="application/pdf",
+            filename=f"{Path(file.filename).stem}.pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename={Path(file.filename).stem}.pdf"
+            },
+        )
+
+    except Exception as e:
+        duration = time.time() - start_time
+        metrics.log_request(
+            {
+                "filename": file.filename if "file" in locals() else "unknown",
+                "endpoint": "/ocr/pdf",
+                "duration": duration,
+                "original_size": original_size,
+                "compressed_size": 0,
+                "success": False,
+                "error": str(e),
+                "metadata": {"language": lang, "page_size": page_size},
+            }
+        )
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+    finally:
+        # Limpiar el archivo PDF temporal después de enviarlo (opcional, pero recomendado)
+        # Nota: FileResponse envía el archivo, pero no lo borra automáticamente.
+        # Podemos usar BackgroundTasks para borrarlo después de la respuesta.
+        pass
 
 
 @app.get("/ocr/result/{task_id}")
