@@ -13,7 +13,7 @@ from fastapi import (
     HTTPException,
     BackgroundTasks,
 )
-from fastapi.responses import FastResponse
+from fastapi.responses import FastResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import numpy as np
