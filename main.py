@@ -12,8 +12,8 @@ from fastapi import (
     Form,
     HTTPException,
     BackgroundTasks,
-    FileResponse,
 )
+from fastapi.responses import FastResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import numpy as np
@@ -41,6 +41,10 @@ from ocr.association import build_question_answer_pairs
 from integration.infinityfree import InfinityFreeClient
 from background import create_task, update_task, get_task
 from metrics import OCRMetrics
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4, letter
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 # Configurar logging
 setup_logging()
