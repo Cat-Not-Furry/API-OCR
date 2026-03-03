@@ -71,7 +71,7 @@ OCR AIDA Pro es una API REST desarrollada con FastAPI que permite procesar imág
 
    ```bash
    git clone https://github.com/Cat-Not-Furry/API-OCR.git
-   cd ocr-aida-pro
+   cd API-OCR
    ```
 2. **Crear y activar entorno virtual**
 
@@ -192,7 +192,7 @@ fetch('https://api-ocr-g2g4.onrender.com/ocr/documento_completo', {
 # Estructura del proyecto
 
 ```text
-api-ocr/
+API-OCR/
 ├── main.py                 # Punto de entrada, endpoints
 ├── config.py               # Constantes globales (rutas, límites)
 ├── background.py           # Gestión de tareas asíncronas
