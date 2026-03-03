@@ -1,0 +1,25 @@
+Checklist de ejecución (DeepSeek primero)
+[ ] Congelar alcance de Fase 1: “editor funcional + compatibilidad OCR/API”, sin mejoras visuales extra.
+[ ] Definir contrato JSON canónico (entrada/salida): OCR raw, campos editables, checkboxes, texto completo, metadata.
+[ ] Documentar endpoints reales a usar: /ocr/documento_completo, /ocr/pdf, /ocr/async, /ocr/result/{task_id}.
+[ ] Asegurar flujo base: subir documento -> OCR -> recibir datos + PDF base -> render editable.
+[ ] Editar todo: texto, campos dinámicos, checkboxes, anotaciones/ajustes mínimos necesarios.
+[ ] Generar PDF final desde frontend con nombre versionado: solicitud_beca_[nombre]_[fecha].pdf.
+[ ] Guardar versión en Supabase Storage y metadata en DB (usuario, plantilla, versión, fecha, origen).
+[ ] Historial funcional: listar versiones y abrir cada PDF generado.
+[ ] Manejo de errores: timeout 504, async 202, archivo inválido, fallo de red, OCR sin texto.
+[ ] Pruebas mínimas reales: 1 documento limpio, 1 con ruido, 1 grande (>5MB), 1 con checkboxes.
+[ ] Criterio de “funcional” cumplido: flujo completo end-to-end sin pasos simulados.
+Criterio para pasar a Cursor Agent
+Pasa a Agent cuando cumplas estos 4:
+[ ] Ya existe flujo end-to-end estable.
+[ ] Tienes 3–5 casos de prueba reales que pasan.
+[ ] El contrato JSON no cambia en cada iteración.
+[ ] Lo que sigue ya es optimización/refactor/escalado, no descubrimiento base.
+Checklist para usar Cursor Agent (cuando toque)
+[ ] Pedir tareas pequeñas (1 objetivo por prompt).
+[ ] Exigir “no romper contrato actual”.
+[ ] Solicitar diff corto + explicación de impacto.
+[ ] Validar con tus casos reales antes de aceptar.
+[ ] Mantener una rama por experimento y rollback simple.
+
