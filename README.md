@@ -86,6 +86,7 @@ OCR AIDA Pro es una API REST desarrollada con FastAPI que permite procesar imág
    ```bash
    pip install -r requirements.txt
    ```
+   
 4. **Estructura de carpetas necesaria (ya incluia en el repositorio)**
 
    **API-OCR/**  
@@ -93,7 +94,8 @@ OCR AIDA Pro es una API REST desarrollada con FastAPI que permite procesar imág
    **├─ bin/          # Binario estático de Tesseract**  
    **├─ tessdata/     # Archivos traineddata (spa, eng)**  
    **└─ fonts/        # Fuentes para PDF (DejaVuSans.ttf)**
-5. **Ejecutar localmente**
+   
+6. **Ejecutar localmente**
 
    ```bash
    uvicorn main:app --reload
