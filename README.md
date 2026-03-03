@@ -252,7 +252,7 @@ API-OCR/
 ## GNU General Public License v3.0 Copyright (c) 2026 OCR AIDA Pro Team.
 
 # Contacto
-## Desarrollador Principal: [Cat-Not-Furry] (https://github.com/Cat-Not-Furry)
+## Desarrollador Principal: [Cat-Not-Furry](https://github.com/Cat-Not-Furry)
 
 # Agradecimientos
 
