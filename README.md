@@ -71,7 +71,7 @@ OCR AIDA Pro es una API REST desarrollada con FastAPI que permite procesar imág
 
    ```bash
    git clone https://github.com/Cat-Not-Furry/API-OCR.git
-   cd ocr-aida-pro
+   cd API-OCR
    ```
 2. **Crear y activar entorno virtual**
 
@@ -85,7 +85,8 @@ OCR AIDA Pro es una API REST desarrollada con FastAPI que permite procesar imág
 
    ```bash
    pip install -r requirements.txt
-  ```
+   ```
+   
 4. **Estructura de carpetas necesaria (ya incluia en el repositorio)**
 
    **API-OCR/**  
@@ -93,7 +94,8 @@ OCR AIDA Pro es una API REST desarrollada con FastAPI que permite procesar imág
    **├─ bin/          # Binario estático de Tesseract**  
    **├─ tessdata/     # Archivos traineddata (spa, eng)**  
    **└─ fonts/        # Fuentes para PDF (DejaVuSans.ttf)**
-5. **Ejecutar localmente**
+   
+6. **Ejecutar localmente**
 
    ```bash
    uvicorn main:app --reload
@@ -192,7 +194,7 @@ fetch('https://api-ocr-g2g4.onrender.com/ocr/documento_completo', {
 # Estructura del proyecto
 
 ```text
-api-ocr/
+API-OCR/
 ├── main.py                 # Punto de entrada, endpoints
 ├── config.py               # Constantes globales (rutas, límites)
 ├── background.py           # Gestión de tareas asíncronas
@@ -250,7 +252,7 @@ api-ocr/
 ## GNU General Public License v3.0 Copyright (c) 2026 OCR AIDA Pro Team.
 
 # Contacto
-## Desarrollador Principal: [Cat-Not-Furry] (https://github.com/Cat-Not-Furry)
+## Desarrollador Principal: [Cat-Not-Furry](https://github.com/Cat-Not-Furry)
 
 # Agradecimientos
 
