@@ -5,6 +5,7 @@ import logging
 import subprocess
 import asyncio
 import time
+import gc  # <-- AÑADIDO para liberar memoria
 from fastapi import (
     FastAPI,
     File,
@@ -191,6 +192,10 @@ def sync_procesar_con_segmentacion(
                         }
                     )
 
+        # Liberar memoria de estructuras intermedias
+        del future_to_idx, regions, processed
+        gc.collect()
+
         resultados.sort(key=lambda x: x["region"])
         texto_completo = "\n".join([r["texto"] for r in resultados if "texto" in r])
         return {
@@ -245,7 +250,7 @@ def sync_ocr_pipeline(
     original_size = len(file_bytes)
     start_time = time.time()
     try:
-        img = read_image_from_bytes(file_bytes, compress=True, max_size_mb=2.0)
+        img = read_image_from_bytes(file_bytes, compress=True, max_size_mb=1.0)
 
         # Calcular tamaño comprimido aproximado
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
@@ -278,6 +283,10 @@ def sync_ocr_pipeline(
             resultado = sync_procesar_con_preprocesamiento(
                 img, lang, correccion_skew=True, metodo_binarizacion="sauvola"
             )
+
+        # Liberar la imagen original, ya no se necesita
+        del img
+        gc.collect()
 
         # Extraer texto según el tipo de resultado
         if "text" in resultado:
@@ -516,6 +525,11 @@ async def procesar_con_segmentacion(img: np.ndarray, lang: str, detectar_tablas:
 
     tareas = [procesar_una(reg, i) for i, reg in enumerate(regions)]
     resultados = await asyncio.gather(*tareas)
+
+    # Liberar memoria de variables intermedias
+    del tareas, sem, regions, processed
+    gc.collect()
+
     resultados.sort(key=lambda x: x["region"])
 
     texto_completo = "\n".join([r["texto"] for r in resultados if "texto" in r])
@@ -654,7 +668,7 @@ async def ocr_basico(
     compressed_size = 0
     try:
         validate_file(file)
-        img, original_size = await read_image(file, compress=True, max_size_mb=2.0)
+        img, original_size = await read_image(file, compress=True, max_size_mb=1.0)
 
         # Log de dimensiones
         h, w = img.shape[:2]
@@ -696,6 +710,10 @@ async def ocr_basico(
             }
         )
 
+        # Liberar imagen
+        del img
+        gc.collect()
+
         return {
             "success": True,
             "filename": file.filename,
@@ -734,7 +752,7 @@ async def ocr_con_segmentacion(
     compressed_size = 0
     try:
         validate_file(file)
-        img, original_size = await read_image(file, compress=True, max_size_mb=2.0)
+        img, original_size = await read_image(file, compress=True, max_size_mb=1.0)
 
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         compressed_size = len(buffer)
@@ -764,6 +782,10 @@ async def ocr_con_segmentacion(
                 },
             }
         )
+
+        # Liberar imagen
+        del img
+        gc.collect()
 
         return {
             "success": True,
@@ -811,7 +833,7 @@ async def ocr_tabla(
     compressed_size = 0
     try:
         validate_file(file)
-        img, original_size = await read_image(file, compress=True, max_size_mb=2.0)
+        img, original_size = await read_image(file, compress=True, max_size_mb=1.0)
 
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         compressed_size = len(buffer)
@@ -842,6 +864,10 @@ async def ocr_tabla(
                 },
             }
         )
+
+        # Liberar imagen
+        del img
+        gc.collect()
 
         return {
             "success": True,
@@ -890,7 +916,7 @@ async def ocr_documento_completo(
     compressed_size = 0
     try:
         validate_file(file)
-        img, original_size = await read_image(file, compress=True, max_size_mb=2.0)
+        img, original_size = await read_image(file, compress=True, max_size_mb=1.0)
 
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         compressed_size = len(buffer)
@@ -1004,6 +1030,12 @@ async def ocr_documento_completo(
         if return_coords and coords_data:
             response["coordenadas"] = coords_data
 
+        # Liberar memoria de variables grandes
+        del img
+        if not return_coords and "coords_data" in locals():
+            del coords_data
+        gc.collect()
+
         return response
 
     except Exception as e:
@@ -1042,7 +1074,7 @@ async def ocr_con_checkboxes(
     compressed_size = 0
     try:
         validate_file(file)
-        img, original_size = await read_image(file, compress=True, max_size_mb=2.0)
+        img, original_size = await read_image(file, compress=True, max_size_mb=1.0)
 
         # Calcular tamaño comprimido aproximado
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
@@ -1148,6 +1180,14 @@ async def ocr_con_checkboxes(
         if return_coords:
             response["coordenadas"] = coordenadas
 
+        # Liberar memoria de variables grandes
+        del img, processed
+        if "text_regions" in locals():
+            del text_regions
+        if "text_lines" in locals():
+            del text_lines
+        gc.collect()
+
         return response
 
     except Exception as e:
@@ -1239,7 +1279,7 @@ async def ocr_to_pdf(
     try:
         validate_file(file)
         # 1. Leer imagen y obtener dimensiones
-        img, original_size = await read_image(file, compress=True, max_size_mb=2.0)
+        img, original_size = await read_image(file, compress=True, max_size_mb=1.0)
         img_height, img_width = img.shape[:2]
 
         # 2. Preprocesar ligeramente (opcional, mejora OCR)
@@ -1294,6 +1334,10 @@ async def ocr_to_pdf(
                 },
             }
         )
+
+        # Liberar memoria de variables grandes
+        del img, processed, text_regions
+        gc.collect()
 
         background_tasks.add_task(os.unlink, temp_pdf_path)
         # Devolver el PDF como archivo adjunto

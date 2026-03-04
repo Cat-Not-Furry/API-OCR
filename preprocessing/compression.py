@@ -13,7 +13,7 @@ class ImageCompressor:
     Estrategia: reducir dimensiones manteniendo calidad suficiente para lectura.
     """
 
-    def __init__(self, target_size_mb: float = 2.0, max_dimension: int = 1500):
+    def __init__(self, target_size_mb: float = 2.0, max_dimension: int = 1200):
         """
         Args:
             target_size_mb: Tamaño objetivo en MB (Render-friendly)
@@ -109,7 +109,7 @@ class ImageCompressor:
 
 # Función simple para usar directamente en endpoints
 async def compress_image(
-    image: np.ndarray, max_size_mb: float = 2.0, max_dimension: int = 1500
+    image: np.ndarray, max_size_mb: float = 2.0, max_dimension: int = 1200
 ) -> np.ndarray:
     compressor = ImageCompressor(
         target_size_mb=max_size_mb, max_dimension=max_dimension
