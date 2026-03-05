@@ -117,8 +117,9 @@ OCR AIDA Pro es una API REST desarrollada con FastAPI que permite procesar imág
 - Concurrencia de OCR segmentado reducida a **3 workers**.
 - Dimension maxima por endpoint para estabilidad:
   - `/ocr/basico`: hasta **1000 px**.
-  - `/ocr/documento_completo`: hasta **1100 px**.
+  - `/ocr/documento_completo`: hasta **1300 px** (perfil de precision controlada).
 - Cuando `documento_completo` usa `return_coords` en modo texto, se prioriza flujo unificado para evitar doble OCR.
+- En `documento_completo` se usa compresion menos agresiva (`max_size_mb` mayor) para preservar detalle en texto fino.
 - Liberación temprana de buffers grandes para disminuir picos de memoria.
 - Arranque Docker con `PORT` dinámico (`${PORT:-10000}`) para compatibilidad con Render.
 
@@ -131,6 +132,7 @@ OCR AIDA Pro es una API REST desarrollada con FastAPI que permite procesar imág
 5. Ejecutar 1 prueba pesada con `POST /ocr/async` y validar consulta por `task_id`.
 6. Confirmar presencia de `texto_estructurado` y, cuando aplique, `coordenadas`.
 7. Revisar métricas de RAM y confirmar ausencia de errores 502/OOM/504 de gateway.
+8. Comparar longitud de `texto_completo` vs version anterior para validar mejora de precision.
 
 ## Uso de la API
 

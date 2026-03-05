@@ -57,7 +57,11 @@ BASICO_OCR_TIMEOUT_RETRY = 30
 BASICO_MAX_DIMENSION = 1000
 BASICO_RETRY_MAX_DIMENSION = 850
 DOCUMENTO_MAX_DIMENSION = 1100
-COORDS_PASS_TIMEOUT = 90
+DOCUMENTO_COMPLETO_MAX_DIMENSION = 1300
+DOCUMENTO_COMPLETO_MAX_SIZE_MB = 1.4
+DOCUMENTO_COMPLETO_UNIFIED_PSM = 4
+DOCUMENTO_COMPLETO_UNIFIED_TIMEOUT = 130
+COORDS_PASS_TIMEOUT = 105
 
 # Inicializar cliente InfinityFree
 infinity_client = InfinityFreeClient(INFINITYFREE_URL)
@@ -448,6 +452,8 @@ async def procesar_con_preprocesamiento_con_coords(
     lang: str,
     correccion_skew: bool,
     metodo_binarizacion: str,
+    psm: int = 3,
+    timeout: int = 120,
 ) -> Dict:
     """
     Versión de procesar_con_preprocesamiento que obtiene texto y coordenadas en una sola pasada.
@@ -465,8 +471,8 @@ async def procesar_con_preprocesamiento_con_coords(
 
     try:
         try:
-            # Una sola llamada a get_text_data (PSM 3 es bueno para palabras sueltas)
-            text_regions = get_text_data(tmp_path, lang, psm=3, timeout=120)
+            # Una sola llamada para texto + coordenadas.
+            text_regions = get_text_data(tmp_path, lang, psm=psm, timeout=timeout)
         except subprocess.TimeoutExpired:
             raise HTTPException(
                 status_code=504,
@@ -983,8 +989,8 @@ async def ocr_documento_completo(
         img, original_size = await read_image(
             file,
             compress=True,
-            max_size_mb=1.0,
-            max_dimension=DOCUMENTO_MAX_DIMENSION,
+            max_size_mb=DOCUMENTO_COMPLETO_MAX_SIZE_MB,
+            max_dimension=DOCUMENTO_COMPLETO_MAX_DIMENSION,
         )
 
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
@@ -1019,7 +1025,12 @@ async def ocr_documento_completo(
         if should_use_unified_ocr:
             # Versión unificada: una sola pasada para texto y coordenadas
             resultado_unificado = await procesar_con_preprocesamiento_con_coords(
-                img, lang, correccion_skew=True, metodo_binarizacion="sauvola"
+                img,
+                lang,
+                correccion_skew=True,
+                metodo_binarizacion="sauvola",
+                psm=DOCUMENTO_COMPLETO_UNIFIED_PSM,
+                timeout=DOCUMENTO_COMPLETO_UNIFIED_TIMEOUT,
             )
             texto = resultado_unificado["text"]
             coords_data = resultado_unificado["coords"]
