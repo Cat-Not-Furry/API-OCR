@@ -6,7 +6,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115.0-green)](https://fastapi.tiangolo.com/)
 [![Tesseract](https://img.shields.io/badge/Tesseract-5.5.2-orange)](https://github.com/tesseract-ocr/tesseract)
 [![Render](https://img.shields.io/badge/deployed%20on-Render-46E3B7)](https://render.com/)
-[![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPLv3-blue)](LICENSE)
 [![Status](https://img.shields.io/badge/status-production%20stable-brightgreen)]()
 
 ---
