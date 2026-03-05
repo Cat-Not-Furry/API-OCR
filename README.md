@@ -36,8 +36,8 @@ OCR AIDA Pro es una API REST desarrollada con FastAPI que permite procesar imág
 - **Extracción estructurada de datos**: Detecta automáticamente horarios (ej. `8:00 AM`), días de la semana, fechas (ej. `24 de febrero de 2026`) y materiales mediante expresiones regulares.
 - **Procesamiento asíncrono**: Endpoint `/ocr/async` para imágenes >5 MB con seguimiento mediante `task_id`.
 - **Generación de PDF con coordenadas exactas**: endpoint `/ocr/pdf` que recrea la disposición original del texto usando ReportLab y fuente Unicode (DejaVuSans).
-- **Segmentación y paralelización**: divide el documento en regiones y las procesa simultáneamente (hasta 5 en paralelo) para optimizar el tiempo de respuesta.
-- **Compresión inteligente**: Redimensiona imágenes a 2000 píxeles máximo y ajusta la calidad JPEG para evitar timeouts en Render.
+- **Segmentación y paralelización**: divide el documento en regiones y las procesa simultáneamente (hasta 3 en paralelo) para reducir picos de RAM en Render.
+- **Compresión inteligente**: redimensiona imágenes de forma conservadora (máx. 1200 px) y ajusta calidad JPEG para evitar timeouts y OOM en Render.
 - **Métricas de calidad**: Sistema integrado con SQLite que registra cada solicitud para análisis de rendimiento y depuración.
 - **CORS habilitado** Para uso desde cualquier frontend.
 - **Manejo robusto de timeouts**: Respuestas 504 cuando Tesseract excede el tiempo límite.
@@ -50,7 +50,7 @@ OCR AIDA Pro es una API REST desarrollada con FastAPI que permite procesar imág
 |:---|:---|
 | **Backend** | Python 3.12, FastAPI, Uvicorn |
 | **OCR** | Tesseract 5.5.2 (binario estático), pytesseract |
-| **Visión por Computador** | OpenCV, scikit-image |
+| **Visión por Computador** | OpenCV, numpy |
 | **Generación de PDF** | ReportLab 4.2.2 |
 | **Base de datos** | SQLite (métricas) |
 | **Frontend de prueba** | HTML, CSS, JavaScript (InfinityFree) |
@@ -105,6 +105,21 @@ OCR AIDA Pro es una API REST desarrollada con FastAPI que permite procesar imág
 ## Variables de entorno (opcionales)
 - **PORT: puerto del servidor (por defecto 10000 en Render)**  
 - **INFINITYFREE_URL: endpoint para callback a InfinityFree (solo si se usa)**  
+
+## Optimizaciones de estabilidad (Render 512 MB)
+
+- Concurrencia de OCR segmentado reducida a **3 workers**.
+- Compresión orientada a estabilidad: **max_dimension=1200** y calidad JPEG mínima conservadora.
+- Liberación temprana de buffers grandes para disminuir picos de memoria.
+- Arranque Docker con `PORT` dinámico (`${PORT:-10000}`) para compatibilidad con Render.
+
+## Checklist rápido de validación en Render
+
+1. Verificar despliegue exitoso (build + start sin errores).
+2. Probar `GET /` para validar estado del servicio.
+3. Ejecutar 3 pruebas reales a `POST /ocr/documento_completo` con archivos representativos.
+4. Confirmar presencia de `texto_estructurado` y, cuando aplique, `coordenadas`.
+5. Revisar métricas de RAM y confirmar ausencia de errores 502/OOM.
 
 ## Uso de la API
 

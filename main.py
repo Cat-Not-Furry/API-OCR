@@ -154,7 +154,7 @@ def sync_procesar_con_segmentacion(
         regions.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
 
         resultados = []
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=3) as executor:
             future_to_idx = {
                 executor.submit(ocr_region, img, reg, lang, 120): i
                 for i, reg in enumerate(regions)
@@ -269,6 +269,11 @@ def sync_ocr_pipeline(
                 x1, y1, x2, y2 = line[0]
                 if abs(y2 - y1) < 10:
                     num_horizontal += 1
+
+        # Liberar buffers de analisis temprano para reducir pico de RAM.
+        del gray, edges
+        if lines is not None:
+            del lines
 
         # Elegir método según el análisis o el parámetro
         if num_horizontal > 10 or optimizar_para == "tablas":
@@ -495,7 +500,7 @@ async def procesar_con_segmentacion(img: np.ndarray, lang: str, detectar_tablas:
 
     regions.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
 
-    sem = asyncio.Semaphore(5)
+    sem = asyncio.Semaphore(3)
 
     async def procesar_una(reg, idx):
         async with sem:
@@ -934,6 +939,11 @@ async def ocr_documento_completo(
                 x1, y1, x2, y2 = line[0]
                 if abs(y2 - y1) < 10:
                     num_horizontal += 1
+
+        # Liberar buffers de analisis temprano para reducir pico de RAM.
+        del gray, edges
+        if lines is not None:
+            del lines
 
         # Elegir estrategia de procesamiento según flags
         if return_coords and use_unified_ocr:
