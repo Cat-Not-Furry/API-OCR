@@ -106,6 +106,12 @@ OCR AIDA Pro es una API REST desarrollada con FastAPI que permite procesar imág
 - **PORT: puerto del servidor (por defecto 10000 en Render)**  
 - **INFINITYFREE_URL: endpoint para callback a InfinityFree (solo si se usa)**  
 
+## Nota operativa sobre timeouts en Render
+
+- El endpoint `/ocr/basico` prioriza respuesta rapida para evitar `504 Gateway Timeout` del proxy.
+- Si el documento es pesado/complejo, usa `/ocr/async` para procesarlo de forma mas estable.
+- Esto no cambia el contrato JSON del OCR; solo mejora el manejo operativo de carga.
+
 ## Optimizaciones de estabilidad (Render 512 MB)
 
 - Concurrencia de OCR segmentado reducida a **3 workers**.
@@ -117,9 +123,10 @@ OCR AIDA Pro es una API REST desarrollada con FastAPI que permite procesar imág
 
 1. Verificar despliegue exitoso (build + start sin errores).
 2. Probar `GET /` para validar estado del servicio.
-3. Ejecutar 3 pruebas reales a `POST /ocr/documento_completo` con archivos representativos.
-4. Confirmar presencia de `texto_estructurado` y, cuando aplique, `coordenadas`.
-5. Revisar métricas de RAM y confirmar ausencia de errores 502/OOM.
+3. Ejecutar 3 pruebas reales a `POST /ocr/basico` con archivos de distinta complejidad.
+4. Ejecutar 1 prueba pesada con `POST /ocr/async` y validar consulta por `task_id`.
+5. Confirmar presencia de `texto_estructurado` y, cuando aplique, `coordenadas`.
+6. Revisar métricas de RAM y confirmar ausencia de errores 502/OOM/504 de gateway.
 
 ## Uso de la API
 

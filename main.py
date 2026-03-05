@@ -687,11 +687,15 @@ async def ocr_basico(
             tmp_path = tmp.name
 
         try:
-            text = run_tesseract(tmp_path, lang, psm=6, timeout=120)
+            # Timeout conservador para evitar que Render cierre la conexion (504 gateway).
+            text = run_tesseract(tmp_path, lang, psm=6, timeout=85)
         except subprocess.TimeoutExpired:
             raise HTTPException(
                 status_code=504,
-                detail="Tiempo de espera agotado. La imagen es demasiado compleja o tiene dimensiones excesivas.",
+                detail=(
+                    "Tiempo de espera agotado para OCR basico. "
+                    "Intenta con una imagen mas ligera o usa /ocr/async para archivos complejos."
+                ),
             )
         finally:
             os.unlink(tmp_path)
