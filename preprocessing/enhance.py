@@ -13,8 +13,6 @@ except ImportError:
     SpellChecker = None
     logger.warning("Spellchecker no instalado, funciones de corrección no disponibles.")
 
-from skimage import filters
-
 
 def correct_skew(image: np.ndarray) -> np.ndarray:
     """Corrige la inclinación del documento."""
@@ -74,6 +72,36 @@ def resize_for_ocr(image: np.ndarray, target_width=2000) -> np.ndarray:
     return image
 
 
+def sauvola_threshold(
+    img: np.ndarray, window_size: int = 25, k: float = 0.2
+) -> np.ndarray:
+    """
+    Aplica umbral de Sauvola a una imagen en escala de grises.
+    Basado en la fórmula: T = mean * (1 + k * ((std / R) - 1))
+    """
+    if img.dtype != np.uint8:
+        img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+    # Convertir a float32 para cálculos precisos
+    img_float = img.astype(np.float32)
+
+    # Media local
+    mean = cv2.boxFilter(img_float, -1, (window_size, window_size))
+
+    # Cuadrado de la media local
+    sqmean = cv2.boxFilter(img_float**2, -1, (window_size, window_size))
+
+    # Desviación estándar local (evitar valores negativos por redondeo)
+    std = np.sqrt(np.abs(sqmean - mean**2))
+
+    R = 128  # Rango dinámico estándar para imágenes de 8 bits
+    threshold = mean * (1 + k * ((std / R) - 1))
+
+    # Aplicar umbral: píxeles mayores que el umbral se convierten en 255
+    binary = (img > threshold).astype(np.uint8) * 255
+    return binary
+
+
 def binarize(image: np.ndarray, method="adaptive") -> np.ndarray:
     """Binarización avanzada: Otsu, Adaptive o Sauvola."""
     gray = image if len(image.shape) == 2 else cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
@@ -84,11 +112,7 @@ def binarize(image: np.ndarray, method="adaptive") -> np.ndarray:
             gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 2
         )
     elif method == "sauvola":
-        from skimage.filters import threshold_sauvola
-
-        window_size = 25
-        thresh_sauvola = threshold_sauvola(gray, window_size=window_size)
-        thresh = (gray > thresh_sauvola).astype(np.uint8) * 255
+        thresh = sauvola_threshold(gray, window_size=25, k=0.2)
     else:
         thresh = gray
     return thresh
@@ -153,7 +177,7 @@ def detect_document_contour(image: np.ndarray) -> np.ndarray:
     peri = cv2.arcLength(largest_contour, True)
     approx = cv2.approxPolyDP(largest_contour, 0.02 * peri, True)
 
-    # Si tiene 4 puntos, asumimos que es el documento (puede ser más si es irregular)
+    # Si tiene 4 puntos, asumimos que es el documento
     if len(approx) == 4:
         # Ordenar puntos: superior-izquierdo, superior-derecho, inferior-derecho, inferior-izquierdo
         pts = approx.reshape(4, 2)
@@ -201,7 +225,7 @@ def try_multiple_preprocessings(img: np.ndarray, lang: str) -> str:
     max_words = 0
     for pipe in pipelines:
         processed = pipe(img.copy())
-        # Guardar temp y ejecutar Tesseract rápido con PSM 3 (auto)
+        # Guardar temp y ejecutar Tesseract rápido con PSM 3
         with tempfile.NamedTemporaryFile(suffix=".png") as tmp:
             cv2.imwrite(tmp.name, processed)
             text = run_tesseract(tmp.name, lang, psm=3)
