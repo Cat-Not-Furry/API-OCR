@@ -19,7 +19,10 @@ def validate_file(file: UploadFile):
 
 
 async def read_image(
-    file: UploadFile, compress: bool = True, max_size_mb: float = 1.0
+    file: UploadFile,
+    compress: bool = True,
+    max_size_mb: float = 1.0,
+    max_dimension: int = 1200,
 ) -> tuple[np.ndarray, int]:
     """
     Lee un UploadFile y lo convierte en array numpy (RGB).
@@ -41,9 +44,8 @@ async def read_image(
         raise HTTPException(400, "No se pudo decodificar la imagen")
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     h, w = img_rgb.shape[:2]
-    max_dim = 1200  # Ajusta según necesidad
-    if w > max_dim or h > max_dim:
-        scale = max_dim / max(w, h)
+    if w > max_dimension or h > max_dimension:
+        scale = max_dimension / max(w, h)
         new_w = int(w * scale)
         new_h = int(h * scale)
         img_rgb = cv2.resize(img_rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
@@ -52,7 +54,9 @@ async def read_image(
     # Comprimir si se solicita y el archivo es grande
     if compress and original_size_mb > 1.0:
         logger.info("Aplicando compresión para reducir tamaño...")
-        img_rgb = await compress_image(img_rgb, max_size_mb=max_size_mb)
+        img_rgb = await compress_image(
+            img_rgb, max_size_mb=max_size_mb, max_dimension=max_dimension
+        )
 
         # Calcular nuevo tamaño aproximado (solo para log)
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR))

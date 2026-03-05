@@ -51,6 +51,14 @@ from reportlab.pdfbase.ttfonts import TTFont
 setup_logging()
 logger = logging.getLogger(__name__)
 
+# Timeouts y limites orientados a estabilidad en Render.
+BASICO_OCR_TIMEOUT_PRIMARY = 45
+BASICO_OCR_TIMEOUT_RETRY = 30
+BASICO_MAX_DIMENSION = 1000
+BASICO_RETRY_MAX_DIMENSION = 850
+DOCUMENTO_MAX_DIMENSION = 1100
+COORDS_PASS_TIMEOUT = 90
+
 # Inicializar cliente InfinityFree
 infinity_client = InfinityFreeClient(INFINITYFREE_URL)
 
@@ -643,6 +651,45 @@ async def generar_pdf_desde_coordenadas(
 # ==================== ENDPOINTS ====================
 
 
+def run_basic_ocr_with_fallback(img: np.ndarray, lang: str) -> str:
+    """
+    Ejecuta OCR basico con degradacion controlada para evitar 504.
+    Si el primer intento agota tiempo, reduce dimension y reintenta.
+    """
+    attempts = [
+        (BASICO_MAX_DIMENSION, BASICO_OCR_TIMEOUT_PRIMARY),
+        (BASICO_RETRY_MAX_DIMENSION, BASICO_OCR_TIMEOUT_RETRY),
+    ]
+    last_timeout = BASICO_OCR_TIMEOUT_PRIMARY
+
+    for max_dim, timeout in attempts:
+        h, w = img.shape[:2]
+        working_img = img
+        if max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+            working_img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            cv2.imwrite(tmp.name, cv2.cvtColor(working_img, cv2.COLOR_RGB2BGR))
+            tmp_path = tmp.name
+
+        try:
+            return run_tesseract(tmp_path, lang, psm=6, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            last_timeout = timeout
+            logger.warning(
+                f"Timeout OCR basico con max_dim={max_dim}, timeout={timeout}s. Reintentando."
+            )
+        finally:
+            os.unlink(tmp_path)
+            if working_img is not img:
+                del working_img
+
+    raise subprocess.TimeoutExpired(cmd="tesseract", timeout=last_timeout)
+
+
 @app.get("/")
 async def root():
     """Health check con información de Tesseract."""
@@ -673,7 +720,12 @@ async def ocr_basico(
     compressed_size = 0
     try:
         validate_file(file)
-        img, original_size = await read_image(file, compress=True, max_size_mb=1.0)
+        img, original_size = await read_image(
+            file,
+            compress=True,
+            max_size_mb=1.0,
+            max_dimension=BASICO_MAX_DIMENSION,
+        )
 
         # Log de dimensiones
         h, w = img.shape[:2]
@@ -682,13 +734,8 @@ async def ocr_basico(
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         compressed_size = len(buffer)
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-            cv2.imwrite(tmp.name, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-            tmp_path = tmp.name
-
         try:
-            # Timeout conservador para evitar que Render cierre la conexion (504 gateway).
-            text = run_tesseract(tmp_path, lang, psm=6, timeout=85)
+            text = run_basic_ocr_with_fallback(img, lang)
         except subprocess.TimeoutExpired:
             raise HTTPException(
                 status_code=504,
@@ -697,8 +744,6 @@ async def ocr_basico(
                     "Intenta con una imagen mas ligera o usa /ocr/async para archivos complejos."
                 ),
             )
-        finally:
-            os.unlink(tmp_path)
 
         text = clean_text(text)
         estructurado = estructurar_texto_ocr(
@@ -761,7 +806,12 @@ async def ocr_con_segmentacion(
     compressed_size = 0
     try:
         validate_file(file)
-        img, original_size = await read_image(file, compress=True, max_size_mb=1.0)
+        img, original_size = await read_image(
+            file,
+            compress=True,
+            max_size_mb=1.0,
+            max_dimension=DOCUMENTO_MAX_DIMENSION,
+        )
 
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         compressed_size = len(buffer)
@@ -842,7 +892,12 @@ async def ocr_tabla(
     compressed_size = 0
     try:
         validate_file(file)
-        img, original_size = await read_image(file, compress=True, max_size_mb=1.0)
+        img, original_size = await read_image(
+            file,
+            compress=True,
+            max_size_mb=1.0,
+            max_dimension=DOCUMENTO_MAX_DIMENSION,
+        )
 
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         compressed_size = len(buffer)
@@ -925,7 +980,12 @@ async def ocr_documento_completo(
     compressed_size = 0
     try:
         validate_file(file)
-        img, original_size = await read_image(file, compress=True, max_size_mb=1.0)
+        img, original_size = await read_image(
+            file,
+            compress=True,
+            max_size_mb=1.0,
+            max_dimension=DOCUMENTO_MAX_DIMENSION,
+        )
 
         _, buffer = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         compressed_size = len(buffer)
@@ -949,8 +1009,14 @@ async def ocr_documento_completo(
         if lines is not None:
             del lines
 
+        # Para modo texto con coordenadas, priorizamos el flujo unificado
+        # para evitar una segunda pasada OCR costosa.
+        should_use_unified_ocr = return_coords and (
+            use_unified_ocr or optimizar_para == "texto"
+        )
+
         # Elegir estrategia de procesamiento según flags
-        if return_coords and use_unified_ocr:
+        if should_use_unified_ocr:
             # Versión unificada: una sola pasada para texto y coordenadas
             resultado_unificado = await procesar_con_preprocesamiento_con_coords(
                 img, lang, correccion_skew=True, metodo_binarizacion="sauvola"
@@ -988,13 +1054,13 @@ async def ocr_documento_completo(
 
             # Si se solicitan coordenadas y no se obtuvieron en la versión unificada, obtenerlas ahora
             coords_data = None
-            if return_coords and not use_unified_ocr:
+            if return_coords and not should_use_unified_ocr:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                     cv2.imwrite(tmp.name, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
                     tmp_path = tmp.name
                 try:
                     coords_data = await asyncio.to_thread(
-                        get_text_data, tmp_path, lang, 3, 120
+                        get_text_data, tmp_path, lang, 3, COORDS_PASS_TIMEOUT
                     )
                 finally:
                     os.unlink(tmp_path)
@@ -1023,7 +1089,7 @@ async def ocr_documento_completo(
                     "lineas_detectadas": num_horizontal,
                     "correct_spelling": correct_spelling,
                     "return_coords": return_coords,
-                    "use_unified_ocr": use_unified_ocr,
+                    "use_unified_ocr": should_use_unified_ocr,
                 },
             }
         )
